@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: kafka-cluster
+  labels:
+    app: zookeeper
+spec:
+  ports:
+    - name: peer # Zookeeper peer communication
+      port: 2888
+      protocol: TCP
+    - name: leader-election # Zookeeper leader election
+      port: 3888
+      protocol: TCP
+  clusterIP: None # Headless service
+  publishNotReadyAddresses: true # Add this line
+  selector:
+    app: zookeeper
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-svc
+  namespace: kafka-cluster
+  labels:
+    app: zookeeper
+spec:
+  ports:
+    - name: client-ssl # Secure client port
+      port: 2281 # Must match secureClientPort in zoo.cfg
+      targetPort: 2281
+      protocol: TCP
+  selector:
+    app: zookeeper
+  type: ClusterIP

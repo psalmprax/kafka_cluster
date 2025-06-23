@@ -1,0 +1,35 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: intermediate-ca-issuer # This issuer uses the Intermediate CA to sign
+  namespace: kafka-cluster
+spec:
+  ca:
+    secretName: intermediate-ca-secret # References the secret from Stage 2
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: zookeeper-server-cert
+  namespace: kafka-cluster
+spec:
+  secretName: zookeeper-tls # Secret storing Zookeeper's server cert and key
+  issuerRef:
+    name: intermediate-ca-issuer # Uses the issuer defined above
+    kind: Issuer
+    group: cert-manager.io
+  commonName: zookeeper-headless.kafka-cluster.svc.cluster.local
+  dnsNames:
+    - "zookeeper-0.zookeeper-headless.kafka-cluster.svc.cluster.local"
+    - "zookeeper-1.zookeeper-headless.kafka-cluster.svc.cluster.local"
+    - "zookeeper-2.zookeeper-headless.kafka-cluster.svc.cluster.local"
+    - "zookeeper-headless.kafka-cluster.svc.cluster.local"
+    - "zookeeper-svc.kafka-cluster.svc.cluster.local" # If you have a regular service
+  duration: 8760h # 1 year
+  renewBefore: 168h # 7 days
+  usages:
+    - server auth
+    - client auth # If this cert is also used by ZK as a client
+  # privateKey: # Optional: specify algorithm and size if needed
+  #   algorithm: ECDSA
+  #   size: 256

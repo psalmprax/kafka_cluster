@@ -1,0 +1,21 @@
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: kafka-zkclient-cert
+#   namespace: kafka-cluster
+# spec:
+#   secretName: kafka-zkclient-tls # Secret storing Kafka's client cert for ZK
+#   issuerRef:
+#     name: intermediate-ca-issuer # Signed by your Intermediate CA
+#     kind: Issuer
+#     group: cert-manager.io
+#   commonName: kafka-zkclient # CN for this client identity
+#   # dnsNames: # Not strictly necessary for client certs unless specific hostname validation is done by ZK for client CN/SAN
+#   #   - kafka-zkclient.kafka-cluster.svc.cluster.local
+#   duration: 8760h # 1 year
+#   renewBefore: 168h # 7 days
+#   usages:
+#     - client auth
+#   # privateKey:
+#   #   algorithm: ECDSA
+#   #   size: 256

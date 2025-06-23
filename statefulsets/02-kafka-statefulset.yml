@@ -1,0 +1,164 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: kafka-cluster
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      serviceAccountName: kafka-cluster-sa
+      terminationGracePeriodSeconds: 60 # Kafka can take longer to shut down cleanly
+      initContainers:
+        - name: keystore-truststore-init
+          image: openjdk:11-jre-slim # Or your preferred image with keytool
+          env:
+            - name: KAFKA_SERVER_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEYSTORE_PASSWORD}}
+            - name: KAFKA_SERVER_KEY_PASSWORD # For the key within the keystore
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEY_PASSWORD}}
+            - name: KAFKA_SERVER_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_TRUSTSTORE_PASSWORD}}
+            - name: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}}
+            - name: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD}}
+          command:
+            - "/bin/bash"
+            - "-ecx"
+            - "set -e\necho \"Starting JKS generation for Kafka\"\nSSL_DIR=\"/mnt/ssl-secrets\"\nJKS_DIR=\"/mnt/ssl-jks\"\nmkdir -p ${JKS_DIR}\n\nSERVER_KEYSTORE_PATH=\"${JKS_DIR}/kafka.server.keystore.jks\"\nSERVER_TRUSTSTORE_PATH=\"${JKS_DIR}/kafka.server.truststore.jks\"\nZKCLIENT_KEYSTORE_PATH=\"${JKS_DIR}/kafka.zkclient.keystore.jks\"\nZKCLIENT_TRUSTSTORE_PATH=\"${JKS_DIR}/kafka.zkclient.truststore.jks\"\n\necho \"Creating Kafka Server Keystore ${SERVER_KEYSTORE_PATH}\"\nopenssl pkcs12 -export -in ${SSL_DIR}/kafka-server-tls/tls.crt -inkey ${SSL_DIR}/kafka-server-tls/tls.key \\\n  -name kafka -CAfile ${SSL_DIR}/kafka-server-tls/ca.crt -caname intermediateca \\\n  -out /tmp/kafka.server.p12 -password pass:${KAFKA_SERVER_KEYSTORE_PASSWORD} \n\nkeytool -importkeystore -srckeystore /tmp/kafka.server.p12 -srcstoretype PKCS12 -srcstorepass ${KAFKA_SERVER_KEYSTORE_PASSWORD} \\\n  -destkeystore ${SERVER_KEYSTORE_PATH} -deststoretype JKS -deststorepass ${KAFKA_SERVER_KEYSTORE_PASSWORD} \\\n  -destkeypass ${KAFKA_SERVER_KEY_PASSWORD} -noprompt\n\necho \"Creating Kafka Server Truststore ${SERVER_TRUSTSTORE_PATH}\"\nkeytool -importcert -alias rootca -keystore ${SERVER_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/root-ca/ca.crt \\\n  -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt\nkeytool -importcert -alias intermediateca -keystore ${SERVER_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/intermediate-ca/ca.crt \\\n  -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt\n\necho \"Creating Kafka ZKClient Keystore ${ZKCLIENT_KEYSTORE_PATH} (using server cert)\"\n# Re-using the server cert/key for ZK client authentication\nopenssl pkcs12 -export -in ${SSL_DIR}/kafka-server-tls/tls.crt -inkey ${SSL_DIR}/kafka-server-tls/tls.key \\\n  -name kafkazkclient -CAfile ${SSL_DIR}/kafka-server-tls/ca.crt -caname intermediateca \\\n  -out /tmp/kafka.zkclient.p12 -password pass:${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \n\nkeytool -importkeystore -srckeystore /tmp/kafka.zkclient.p12 -srcstoretype PKCS12 -srcstorepass ${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \\\n  -destkeystore ${ZKCLIENT_KEYSTORE_PATH} -deststoretype JKS -deststorepass ${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \\\n  -destkeypass ${KAFKA_SERVER_KEY_PASSWORD} -noprompt\n\necho \"Creating Kafka ZKClient Truststore ${ZKCLIENT_TRUSTSTORE_PATH}\"\nkeytool -importcert -alias rootca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/root-ca/ca.crt \\\n  -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt\nkeytool -importcert -alias intermediateca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/intermediate-ca/ca.crt \\\n  -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt\n\necho \"JKS generation complete.\"\nls -l ${JKS_DIR}\n"
+          volumeMounts:
+            - name: ssl-jks
+              mountPath: /mnt/ssl-jks
+            - name: kafka-server-tls-secret # Kafka's own server cert/key
+              mountPath: /mnt/ssl-secrets/kafka-server-tls
+              readOnly: true
+            - name: root-ca-secret
+              mountPath: /mnt/ssl-secrets/root-ca
+              readOnly: true
+            - name: intermediate-ca-secret
+              mountPath: /mnt/ssl-secrets/intermediate-ca
+              readOnly: true
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0 # Use a specific, recent version
+          ports:
+            - name: internal-ssl
+              containerPort: 9093
+            - name: controller # If using KRaft
+              containerPort: 9094
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Dynamically set broker.id from pod name (e.g., kafka-0 -> 0)
+            - name: KAFKA_BROKER_ID_COMMAND
+              value: "echo $(POD_NAME) | awk -F'-' '{print $$NF}'"
+            # Dynamically set advertised.listeners
+            - name: KAFKA_ADVERTISED_LISTENERS_COMMAND
+              value: "echo INTERNAL_SSL://$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093"
+            # Passwords for server.properties placeholders (if your image entrypoint substitutes them)
+            # Or used by Kafka Java process directly
+            - name: KAFKA_ADVERTISED_LISTENERS # Set a placeholder to satisfy initial 'dub ensure' check
+              value: "PLAINTEXT://please-override-me:9092"
+            - name: KAFKA_ZOOKEEPER_CONNECT # Explicitly set for the startup script
+              value: "zookeeper-svc.kafka-cluster.svc.cluster.local:2281"
+            - name: KAFKA_SSL_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEYSTORE_PASSWORD}}
+            - name: KAFKA_SSL_KEY_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEY_PASSWORD}}
+            - name: KAFKA_SSL_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_TRUSTSTORE_PASSWORD}}
+            - name: KAFKA_ZOOKEEPER_SSL_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}}
+            - name: KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD}}
+            # Other Kafka configurations (many are in the ConfigMap)
+            - name: KAFKA_LOG4J_OPTS
+              value: "-Dlog4j.configuration=file:/etc/kafka/config/log4j.properties" # If you add log4j.properties to ConfigMap
+            - name: KAFKA_HEAP_OPTS
+              value: "-Xms1G -Xmx1G" # Adjust as needed
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "3" # Should be <= number of brokers
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "2"
+              # If using KRaft, uncomment and adjust these:
+              # - name: KAFKA_PROCESS_ROLES
+              #   value: "broker,controller" # Or just "broker"
+              # - name: KAFKA_NODE_ID_COMMAND
+              #   value: "echo $(POD_NAME) | awk -F'-' '{print $NF}'" # Corrected $$NF to $NF
+              # - name: KAFKA_CONTROLLER_QUORUM_VOTERS_COMMAND
+              #   value: "for i in $(seq 0 2); do echo -n \"$i@kafka-$i.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9094,\"; done | sed 's/,$//'" # Corrected $$i to $i
+          # The Confluent Kafka images have entrypoints that can use these env vars.
+          # Ensure your server.properties from ConfigMap is mounted correctly.
+          resources: # Add resource requests and limits
+            requests:
+              memory: "2Gi" # Example
+              cpu: "1" # Example
+            limits:
+              memory: "4Gi" # Example
+              cpu: "2" # Example
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+            - name: kafka-config # Mounts server.properties (and potentially log4j.properties)
+              mountPath: /etc/kafka/config # Default conf dir for many Kafka images
+            - name: ssl-jks # Mount the JKS files prepared by initContainer
+              mountPath: /mnt/ssl-jks # Must match paths in server.properties
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: 9093 # Internal SSL listener
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: 9093
+            initialDelaySeconds: 60
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: kafka-config
+          configMap:
+            name: kafka-config
+        - name: ssl-jks
+          emptyDir: {}
+        - name: kafka-server-tls-secret
+          secret:
+            secretName: kafka-tls # Cert for Kafka server & ZK client
+        - name: root-ca-secret
+          secret:
+            secretName: root-ca-secret
+        - name: intermediate-ca-secret
+          secret:
+            secretName: intermediate-ca-secret
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path # Or your chosen StorageClass
+        resources:
+          requests: # Reduced for Minikube, adjust as needed
+            storage: 5Gi

@@ -1,0 +1,11 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: local-storage
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+# WaitForFirstConsumer is important for local volumes. It delays PV binding
+# until a pod is scheduled, allowing the scheduler to pick a node
+# that has a suitable local PV available.
+reclaimPolicy: Retain
+allowVolumeExpansion: true # If your underlying local volumes can be expanded

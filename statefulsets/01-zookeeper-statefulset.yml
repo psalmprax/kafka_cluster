@@ -1,0 +1,260 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: kafka-cluster
+  labels:
+    app: zookeeper
+spec:
+  serviceName: zookeeper-headless
+  replicas: 3 # Should match the number of server.X entries in zoo.cfg
+  selector:
+    matchLabels:
+      app: zookeeper
+  updateStrategy:
+    type: RollingUpdate
+  podManagementPolicy: Parallel # Or OrderedReady, Parallel allows faster startup
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      serviceAccountName: kafka-cluster-sa
+      terminationGracePeriodSeconds: 30
+      initContainers:
+        - name: keystore-truststore-init
+          image: openjdk:11-jre-slim # Or your preferred image with keytool
+          env:
+            - name: ZK_SERVER_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zookeeper-credentials
+                  key: ZK_SERVER_KEYSTORE_PASSWORD
+            - name: ZK_SERVER_TRUSTSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zookeeper-credentials
+                  key: ZK_SERVER_TRUSTSTORE_PASSWORD
+          command:
+            - "/bin/bash"
+            - "-ecx"
+            - |
+              set -e
+              echo "Starting JKS generation for Zookeeper"
+              SSL_DIR="/mnt/ssl-secrets"
+              JKS_DIR="/mnt/ssl-jks"
+              mkdir -p ${JKS_DIR}
+
+              KEYSTORE_PATH="${JKS_DIR}/zookeeper.server.keystore.jks"
+              TRUSTSTORE_PATH="${JKS_DIR}/zookeeper.server.truststore.jks"
+
+              echo "Creating Zookeeper Server Keystore ${KEYSTORE_PATH}"
+              openssl pkcs12 -export -in ${SSL_DIR}/zookeeper-server-tls/tls.crt -inkey ${SSL_DIR}/zookeeper-server-tls/tls.key \
+                -name zookeeper -CAfile ${SSL_DIR}/intermediate-ca/tls.crt -caname intermediateca \
+                -out /tmp/zookeeper.server.p12 -password pass:${ZK_SERVER_KEYSTORE_PASSWORD}
+
+              keytool -importkeystore -srckeystore /tmp/zookeeper.server.p12 -srcstoretype PKCS12 -srcstorepass ${ZK_SERVER_KEYSTORE_PASSWORD} \
+                -destkeystore ${KEYSTORE_PATH} -deststoretype JKS -deststorepass ${ZK_SERVER_KEYSTORE_PASSWORD} \
+                -destkeypass ${ZK_SERVER_KEYSTORE_PASSWORD} -noprompt
+
+              echo "Verifying Zookeeper Server Keystore ${KEYSTORE_PATH} with password..."
+              keytool -list -v -keystore ${KEYSTORE_PATH} -storepass ${ZK_SERVER_KEYSTORE_PASSWORD} -noprompt || \
+                (echo "ERROR: Failed to list/verify keystore ${KEYSTORE_PATH}" && exit 1)
+
+              echo "Creating Zookeeper Server Truststore ${TRUSTSTORE_PATH}"
+              keytool -importcert -alias rootca -keystore ${TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/root-ca/ca.crt \
+                -storepass ${ZK_SERVER_TRUSTSTORE_PASSWORD} -noprompt
+
+              keytool -importcert -alias intermediateca -keystore ${TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/intermediate-ca/ca.crt \
+                -storepass ${ZK_SERVER_TRUSTSTORE_PASSWORD} -noprompt
+
+              # If ZK needs to trust specific client certs not signed by the common CAs, add them here.
+              # For mTLS with Kafka, Kafka's client cert is signed by intermediate CA, which is already trusted.
+
+              echo "JKS generation complete."
+              ls -l ${JKS_DIR}
+          volumeMounts:
+            - name: ssl-jks # Output volume for generated JKS files
+              mountPath: /mnt/ssl-jks
+            - name: zookeeper-server-tls-secret # ZK's own server cert/key
+              mountPath: /mnt/ssl-secrets/zookeeper-server-tls
+              readOnly: true
+            - name: root-ca-secret
+              mountPath: /mnt/ssl-secrets/root-ca
+              readOnly: true
+            - name: intermediate-ca-secret
+              mountPath: /mnt/ssl-secrets/intermediate-ca
+              readOnly: true
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.5.0 # Use a specific, recent version
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "Determining server ID for myid file..."
+              # HOSTNAME is automatically set by Kubernetes (e.g., zookeeper-0)
+              # ZOOKEEPER_SERVER_ID_OFFSET is "0" from this container's env
+              ORDINAL=$(echo "$HOSTNAME" | awk -F'-' '{print $NF}')
+              SERVER_ID=$((ORDINAL + ZOOKEEPER_SERVER_ID_OFFSET)) # ZOOKEEPER_SERVER_ID_OFFSET is "0"
+              # myid file must be in the dataDir specified in zoo.cfg
+              # Your template has dataDir=/var/lib/zookeeper/data
+              MYID_PATH="/var/lib/zookeeper/data/myid"
+
+              echo "Creating myid file at ${MYID_PATH} with server ID: ${SERVER_ID}"
+              mkdir -p "$(dirname "${MYID_PATH}")" # Ensure directory exists
+              echo "${SERVER_ID}" > "${MYID_PATH}"
+              echo "myid file created. Content of ${MYID_PATH}: $(cat "${MYID_PATH}")"
+
+              echo "Copying custom Zookeeper configuration..."
+              # The Confluent entrypoint will now use our custom template mounted
+              # at /etc/confluent/docker/zookeeper.properties.template
+              # to generate /etc/kafka/zookeeper.properties.
+              echo "Relying on Confluent entrypoint to use custom template for zookeeper.properties."
+
+              # Unset password env vars that might be picked up by Confluent scripts or ZK itself,
+              # to force reliance on the hardcoded passwords in the properties file.
+              unset ZK_SERVER_KEYSTORE_PASSWORD
+              unset ZK_SERVER_TRUSTSTORE_PASSWORD
+
+              # Execute the original image entrypoint
+              exec /etc/confluent/docker/run
+          ports:
+            - name: client-ssl
+              containerPort: 2281 # secureClientPort
+            - name: peer
+              containerPort: 2888
+            - name: leader-election
+              containerPort: 3888
+          env:
+            # Standard Zookeeper client port, used by readiness/liveness probes
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            # Secure client port used by Kafka brokers
+            - name: ZOOKEEPER_SECURE_CLIENT_PORT
+              value: "2281"
+            - name: ZOOKEEPER_SERVER_ID_OFFSET
+              value: "0" # If server.X starts from 0
+            - name: ZOOKEEPER_CONF_DIR
+              value: "/etc/zookeeper/conf"
+            - name: ZOOKEEPER_LOG4J_ROOT_LOGLEVEL
+              value: "INFO"
+            # Settings from your zoo.cfg, translated to Confluent env vars
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+            - name: ZOOKEEPER_INIT_LIMIT
+              value: "10"
+            - name: ZOOKEEPER_SYNC_LIMIT
+              value: "5"
+            - name: ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT
+              value: "3"
+            - name: ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL
+              value: "1"
+            - name: ZOOKEEPER_MAX_CLIENT_CNXNS
+              value: "60"
+            - name: ZOOKEEPER_ADMIN_ENABLE_SERVER
+              value: "true"
+            - name: ZOOKEEPER_ADMIN_SERVER_PORT
+              value: "8080"
+            # SSL Settings
+            - name: ZOOKEEPER_SERVER_CNXN_FACTORY
+              value: "org.apache.zookeeper.server.NettyServerCnxnFactory"
+            - name: ZOOKEEPER_SSL_CLIENT_AUTH
+              value: "needed"
+            - name: ZOOKEEPER_SSL_KEYSTORE_LOCATION
+              value: "/mnt/ssl-jks/zookeeper.server.keystore.jks"
+            - name: ZOOKEEPER_SSL_TRUSTSTORE_LOCATION
+              value: "/mnt/ssl-jks/zookeeper.server.truststore.jks"
+            - name: ZK_SERVER_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zookeeper-credentials
+                  key: ZK_SERVER_KEYSTORE_PASSWORD
+            - name: ZK_SERVER_TRUSTSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zookeeper-credentials
+                  key: ZK_SERVER_TRUSTSTORE_PASSWORD
+          resources: # Add resource requests and limits
+            requests:
+              memory: "1Gi" # Example
+              cpu: "500m" # Example
+            limits:
+              memory: "2Gi" # Example
+              cpu: "1" # Example
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log # Separate log dir if desired, or combine with data
+              mountPath: /var/lib/zookeeper/log
+            - name: zookeeper-config # Mounts the zoo.cfg
+              mountPath: /etc/zookeeper/conf # Original zoo.cfg still mounted for reference if needed
+              readOnly: true
+            - name: zookeeper-config-template # Mounts our custom template
+              mountPath: /etc/confluent/docker/zookeeper.properties.template # Path used by dub template
+              subPath: zookeeper.properties.template # Mount only this key from the ConfigMap
+              readOnly: true # Template file itself is read-only
+            - name: ssl-jks # Mount the JKS files prepared by initContainer, path matches ZOOKEEPER_SSL_*_LOCATION
+              mountPath: /mnt/ssl-jks # Must match paths in zoo.cfg
+              readOnly: true
+            - name: intermediate-ca-secret # Mount for probe's -CAfile
+              mountPath: /mnt/ssl-secrets/intermediate-ca # Must match path in probe
+              readOnly: true
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "openssl s_client -connect localhost:2281 -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
+            initialDelaySeconds: 15
+            timeoutSeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "openssl s_client -connect localhost:2281 -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
+            initialDelaySeconds: 20
+            timeoutSeconds: 5
+            periodSeconds: 15
+      volumes:
+        - name: zookeeper-config
+          configMap:
+            name: zookeeper-config # This is the ConfigMap resource name
+        - name: zookeeper-config-template # Volume for the custom template
+          configMap:
+            name: zookeeper-config # Sourced from the same ConfigMap
+            items:
+              - key: zookeeper.properties.template # The key in the ConfigMap
+                path: zookeeper.properties.template # The filename to create in the mount
+        - name: ssl-jks # Shared volume for JKS files
+          emptyDir: {}
+        - name: zookeeper-server-tls-secret
+          secret:
+            secretName: zookeeper-tls # Cert for ZK server
+        - name: root-ca-secret
+          secret:
+            secretName: root-ca-secret
+        - name: intermediate-ca-secret
+          secret:
+            secretName: intermediate-ca-secret
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path # Or your chosen StorageClass (e.g., local-storage)
+        resources:
+          requests:
+            storage: 10Gi # Adjust as needed
+    - metadata:
+        name: zookeeper-log
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: local-path # Or your chosen StorageClass
+        resources:
+          requests:
+            storage: 5Gi # Adjust as needed

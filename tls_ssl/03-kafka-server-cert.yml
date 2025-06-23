@@ -1,0 +1,31 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kafka-server-certs # Name of this Certificate resource
+  namespace: kafka-cluster # Namespace for the Certificate and Secret
+spec:
+  secretName: kafka-tls # Secret storing Kafka's server cert and key
+  issuerRef:
+    name: intermediate-ca-issuer # Uses the Intermediate CA Issuer
+    kind: Issuer
+    group: cert-manager.io
+  commonName: kafka-headless.kafka-cluster.svc.cluster.local # A general CN for the Kafka service
+  dnsNames:
+    # For inter-broker and client communication within the StatefulSet
+    - "kafka-0.kafka-headless.kafka-cluster.svc.cluster.local"
+    - "kafka-1.kafka-headless.kafka-cluster.svc.cluster.local"
+    # - "kafka-2.kafka-headless.kafka-cluster.svc.cluster.local" # Add for all your Kafka replicas
+    # For clients connecting via the headless service (resolves to any broker)
+    - "kafka-headless.kafka-cluster.svc.cluster.local"
+    # If you have a regular ClusterIP service for clients:
+    - "kafka-svc.kafka-cluster.svc.cluster.local" # Example regular service name
+    # If you plan to expose Kafka externally via an Ingress or LoadBalancer, add those DNS names here too:
+    # - "kafka.example.com"
+  duration: 8760h # 1 year
+  renewBefore: 168h # 7 days
+  usages:
+    - server auth
+    - client auth # If Kafka brokers also need to act as clients (e.g., to Zookeeper with this cert)
+  # privateKey: # Optional: specify algorithm and size if needed
+  #   algorithm: ECDSA
+  #   size: 256

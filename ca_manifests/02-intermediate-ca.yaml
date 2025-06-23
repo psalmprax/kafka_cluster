@@ -1,0 +1,31 @@
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: root-ca-issuer # This issuer uses the Root CA to sign
+  namespace: kafka-cluster
+spec:
+  ca:
+    secretName: root-ca-secret # References the secret from Stage 1
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kafka-intermediate-ca
+  namespace: kafka-cluster
+spec:
+  isCA: true
+  commonName: kafka-intermediate-ca
+  secretName: intermediate-ca-secret # Secret storing the Intermediate CA cert and key
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: root-ca-issuer # Uses the issuer defined above
+    kind: Issuer
+    group: cert-manager.io
+  duration: 21900h # 2.5 years
+  renewBefore: 360h # 15 days
+  usages:
+    - digital signature
+    - key encipherment
+    - cert sign

@@ -1,0 +1,14 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: kafka-cluster # Ensure this matches your deployment namespace
+  name: secret-reader-role
+rules:
+  - apiGroups: [""] # Core API group
+    resources: ["secrets"]
+    verbs: ["get", "watch", "list"]
+  # Add other permissions if your application pods need them
+  # For example, if they need to interact with ConfigMaps:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "watch", "list"]

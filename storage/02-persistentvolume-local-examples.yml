@@ -1,0 +1,93 @@
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: kafka-local-pv-0 # Unique name for each PV
+# spec:
+#   capacity:
+#     storage: 5Gi # Example size
+#   volumeMode: Filesystem
+#   accessModes:
+#     - ReadWriteOnce # Local volumes are typically RWO
+#   persistentVolumeReclaimPolicy: Retain # Or Delete
+#   storageClassName: local-storage # Matches the StorageClass name
+#   local:
+#     path: /mnt/disks/kafka-ssd1 # Path to the local disk/directory on the node
+#   nodeAffinity:
+#     required:
+#       nodeSelectorTerms:
+#         - matchExpressions:
+#             - key: kubernetes.io/hostname
+#               operator: In
+#               values:
+#                 - minikube # Specific node where this disk exists
+# ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: kafka-local-pv-1
+# spec:
+#   capacity:
+#     storage: 5Gi
+#   volumeMode: Filesystem
+#   accessModes:
+#     - ReadWriteOnce
+#   persistentVolumeReclaimPolicy: Retain # Or Delete
+#   storageClassName: local-storage # Matches the StorageClass name
+#   local:
+#     path: /mnt/disks/kafka-ssd2 # Path on a different node or different disk
+#   nodeAffinity:
+#     required:
+#       nodeSelectorTerms:
+#         - matchExpressions:
+#             - key: kubernetes.io/hostname
+#               operator: In
+#               values:
+#                 - minikube
+
+# # ... Create more PVs as needed for your Zookeeper and Kafka replicas
+# ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: zookeeper-local-pv-0 # Unique name for each PV
+# spec:
+#   capacity:
+#     storage: 5Gi # Example size
+#   volumeMode: Filesystem
+#   accessModes:
+#     - ReadWriteOnce # Local volumes are typically RWO
+#   persistentVolumeReclaimPolicy: Retain # Or Delete
+#   storageClassName: local-storage # Matches the StorageClass name
+#   local:
+#     path: /mnt/disks/zookeeper-ssd1 # Path to the local disk/directory on the node
+#   nodeAffinity:
+#     required:
+#       nodeSelectorTerms:
+#         - matchExpressions:
+#             - key: kubernetes.io/hostname
+#               operator: In
+#               values:
+#                 - minikube # Specific node where this disk exists
+# ---
+# apiVersion: v1
+# kind: PersistentVolume
+# metadata:
+#   name: zookeeper-local-pv-1
+# spec:
+#   capacity:
+#     storage: 5Gi
+#   volumeMode: Filesystem
+#   accessModes:
+#     - ReadWriteOnce
+#   persistentVolumeReclaimPolicy: Retain # Or Delete
+#   storageClassName: local-storage # Matches the StorageClass name
+#   local:
+#     path: /mnt/disks/zookeeper-ssd2 # Path on a different node or different disk
+#   nodeAffinity:
+#     required:
+#       nodeSelectorTerms:
+#         - matchExpressions:
+#             - key: kubernetes.io/hostname
+#               operator: In
+#               values:
+#                 - minikube
