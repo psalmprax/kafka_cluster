@@ -21,6 +21,7 @@
      *   Confluent `dub` Entrypoint & Environment Variables
      *   Readiness & Liveness Probes for mTLS
  5.  Troubleshooting Common Errors & Solutions
+ 6.  Visual Explanations (Diagrams)
  6.  Verification
  7.  Further Steps
 
@@ -133,6 +134,29 @@
  *   They should specify a compatible TLS version (`-tls1_2` or `-tls1_3`).
 
  **Key Takeaway:** Probes are clients too! They must adhere to the server's mTLS requirements. Failing probes lead to pod restarts.
+
+### 4.7 SSL/TLS Mutual Handshake Flow
+
+Understanding the mTLS handshake is key to debugging. Here's a simplified overview of the process between a Kafka client (e.g., another broker, or a producer/consumer) and a Kafka broker (or Kafka's client to Zookeeper):
+
+1.  **ClientHello:** The client initiates the handshake, proposing TLS versions, cipher suites it supports, and optionally, a list of CAs it trusts for server authentication.
+    *   **Affected Parameters:** `ssl.enabled.protocols`, `ssl.cipher.suites` (client side).
+2.  **ServerHello:** The server responds, selecting the highest mutually supported TLS version and a common cipher suite. It also sends its digital certificate.
+    *   **Affected Parameters:** `ssl.enabled.protocols`, `ssl.cipher.suites` (server side), `ssl.keystore.location`, `ssl.keystore.password` (server's identity).
+3.  **Server Certificate:** The server sends its certificate chain (leaf, intermediate, root).
+    *   **Affected Parameters:** `ssl.keystore.location` (ensuring the full chain is embedded).
+4.  **Server Key Exchange (Optional):** If using ephemeral Diffie-Hellman, the server sends parameters for key exchange.
+5.  **Server Hello Done:** The server indicates it's done with its part of the handshake.
+6.  **Client Certificate (if `ssl.client.auth=required`):** The client verifies the server's certificate chain against its truststore. If `ssl.client.auth` is `required` on the server, the client then sends its own digital certificate chain.
+    *   **Affected Parameters:** `ssl.truststore.location`, `ssl.truststore.password` (client's trust of server), `ssl.client.auth` (server's requirement), `ssl.keystore.location`, `ssl.keystore.password` (client's identity).
+7.  **Client Key Exchange:** The client sends its key exchange parameters.
+8.  **Client Certificate Verify (if client certificate sent):** The client proves ownership of its private key by signing a hash of the handshake messages.
+    *   **Affected Parameters:** `ssl.keystore.location`, `ssl.keystore.password` (client's private key).
+9.  **Change Cipher Spec:** Both client and server send messages indicating they will switch to the newly negotiated cipher suite.
+10. **Finished:** Both client and server send encrypted "Finished" messages, proving they successfully completed the handshake.
+11. **Application Data:** Secure communication begins.
+
+Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incomplete, cipher mismatch, client certificate missing) will result in an `SSLHandshakeException`.
 
  ## 5. Troubleshooting Common Errors & Solutions
 
