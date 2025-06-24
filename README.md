@@ -377,17 +377,17 @@ graph LR
  This flowchart details the steps performed by the `initContainer` to prepare the Java keystores and truststores from raw certificate secrets.
  ```mermaid
  flowchart TD
-    A[Start InitContainer] --> B[Mount K8s Secrets]
-    B --> C[Read tls.crt, tls.key, CA.crt]
-    C --> D[Concatenate CA Chain (intermediate + root)]
-    D --> E[Generate PKCS12 Keystore (server.crt + server.key + CA Chain)]
+    A[Start InitContainer] --> B[Mount K8s Secrets<br>(Certs, Keys, CAs)]
+    B --> C[Read Raw Cert/Key Files]
+    C --> D[Create Full CA Chain File]
+    D --> E[Generate PKCS12 Keystore<br>with Server Cert + Full CA Chain]
     E --> F[Convert PKCS12 to JKS Keystore]
-    F --> G[Import Root CA to JKS Truststore]
-    G --> H[Import Intermediate CA to JKS Truststore]
-    H --> I[Write Password Files]
-    I --> J[Set File Permissions (chmod 600)]
-    J --> K[Unset Password Env Vars]
-    K --> L[End InitContainer]
+    F --> G[Create JKS Truststore<br>with Root + Intermediate CAs]
+    G --> G_verify(Verify Keystore & Truststore<br>e.g., keytool -list)
+    G_verify --> H[Write Passwords to Files<br>for Confluent 'dub' script]
+    H --> I[Set File Permissions<br>(chmod 600, chown 1000:1000)]
+    I --> J[Unset Password Env Vars<br>for security]
+    J --> K[End InitContainer]
  ```
 
  ### 6.5 Confluent `dub` Configuration Flow Diagram
