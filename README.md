@@ -22,8 +22,8 @@
      *   Readiness & Liveness Probes for mTLS
  5.  Troubleshooting Common Errors & Solutions
  6.  Visual Explanations (Diagrams)
- 6.  Verification
- 7.  Further Steps
+ 7.  Verification
+ 8.  Further Steps
 
  ## 1. Introduction
 
