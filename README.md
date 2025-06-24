@@ -396,14 +396,15 @@ graph LR
 
  ```mermaid
  graph TD
-    A[Start Main Container] --> B{Execute /etc/confluent/docker/run\n(dub entrypoint)}
+    A[Start Main Container] --> B{Execute /etc/confluent/docker/run<br/>(dub entrypoint)}
     B --> C[Read KAFKA_* / ZOOKEEPER_* Env Vars]
-    C --> D{Process Env Vars\n(e.g., _LOCATION, _FILENAME, _PASSWORD, _CREDENTIALS)}
-    D --> E{Validate Paths & Credentials\n(e.g., `dub path ... exists`)}
+    C --> D{Process Env Vars<br/>(e.g., _LOCATION, _FILENAME, _PASSWORD, _CREDENTIALS)}
+    D --> E{Validate Paths & Credentials<br/>(e.g., `dub path ... exists`)}
     E -- Validation Success --> F[Generate Internal server.properties]
     E -- Validation Failed --> G[Exit with Error]
-    F --> H[Start Kafka/Zookeeper Java Process\n(using generated properties)]
+    F --> H[Start Kafka/Zookeeper Java Process<br/>(using generated properties)]
     H --> I[Application Running]
+
  ```
 
  ## 7. Verification
