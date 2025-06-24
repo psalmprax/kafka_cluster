@@ -375,17 +375,16 @@ graph LR
  ### 6.4 InitContainer Process Diagram
 
  This flowchart details the steps performed by the `initContainer` to prepare the Java keystores and truststores from raw certificate secrets.
-
  ```mermaid
  flowchart TD
-    A[Start InitContainer] --> B{Mount K8s Secrets?}
+    A[Start InitContainer] --> B[Mount K8s Secrets]
     B --> C[Read tls.crt, tls.key, CA.crt]
     C --> D[Concatenate CA Chain (intermediate + root)]
     D --> E[Generate PKCS12 Keystore (server.crt + server.key + CA Chain)]
     E --> F[Convert PKCS12 to JKS Keystore]
     F --> G[Import Root CA to JKS Truststore]
     G --> H[Import Intermediate CA to JKS Truststore]
-    H --> I{Write Password Files?}
+    H --> I[Write Password Files]
     I --> J[Set File Permissions (chmod 600)]
     J --> K[Unset Password Env Vars]
     K --> L[End InitContainer]
