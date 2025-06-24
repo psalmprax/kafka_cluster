@@ -336,14 +336,14 @@ graph LR
 
  ```mermaid
  graph TD
-    RootCA[Root CA (Self-Signed)]
-    IntermediateCA[Intermediate CA]
-    ZkCert[Zookeeper Server Certificate]
-    KafkaCert[Kafka Server Certificate]
+   RootCA[Root CA Self-Signed]
+   IntermediateCA[Intermediate CA]
+   ZkCert[Zookeeper Server Certificate]
+   KafkaCert[Kafka Server Certificate]
 
-    RootCA -- Signs --> IntermediateCA
-    IntermediateCA -- Signs --> ZkCert
-    IntermediateCA -- Signs --> KafkaCert
+   RootCA -- Signs --> IntermediateCA
+   IntermediateCA -- Signs --> ZkCert
+   IntermediateCA -- Signs --> KafkaCert
  ```
 
  ### 6.3 mTLS Handshake Flow Diagram
