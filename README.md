@@ -4,9 +4,9 @@
 
 
 ## Table of Contents
-[1. Introduction](#1-introduction)  
-[2. Prerequisites](#2-prerequisites)  
-[3. Cluster Setup Steps](#3-cluster-setup-steps)  
+[1. Introduction](#1-introduction)
+[2. Prerequisites](#2-prerequisites)
+[3. Cluster Setup Steps](#3-cluster-setup-steps)
    - [3.1 Minikube Initialization](#31-minikube-initialization)  
    - [3.2 Cert-Manager Installation](#32-cert-manager-installation)  
    - [3.3 Kubernetes Namespace & RBAC](#33-kubernetes-namespace--rbac)  
@@ -14,7 +14,7 @@
    - [3.5 Leaf Certificate Issuance](#35-leaf-certificate-issuance)  
    - [3.6 Secrets & ConfigMaps Deployment](#36-secrets--configmaps-deployment)  
    - [3.7 Zookeeper & Kafka StatefulSets Deployment](#37-zookeeper--kafka-statefulsets-deployment)  
-4. [Detailed SSL/TLS Configuration Guide](#detailed-ssltls-configuration-guide)  
+[4. Detailed SSL/TLS Configuration Guide](#detailed-ssltls-configuration-guide)
    - [4.1 Certificate Management with cert-manager](#41-certificate-management-with-cert-manager)  
    - [4.2 Keystore & Truststore Generation (initContainers)](#42-keystore--truststore-generation-initcontainers)  
    - [4.3 Kubernetes Secrets for Passwords](#43-kubernetes-secrets-for-passwords)  
@@ -22,7 +22,7 @@
    - [4.5 Confluent `dub` Entrypoint & Environment Variables](#45-confluent-dub-entrypoint--environment-variables)  
    - [4.6 Readiness & Liveness Probes for mTLS](#46-readiness--liveness-probes-for-mtls)  
    - [4.7 SSL/TLS Mutual Handshake Flow](#47-ssltls-mutual-handshake-flow)  
-5. [Troubleshooting Common Errors & Solutions](#troubleshooting-common-errors--solutions)  
+[5. Troubleshooting Common Errors & Solutions](#troubleshooting-common-errors--solutions)
    - [5.1 javax.net.ssl.SSLHandshakeException: Empty server certificate chain](#51-javaxnetsslsslhandshakeexception-empty-server-certificate-chain)  
    - [5.2 java.lang.IllegalArgumentException: No enum constant ...](#52-javalangillegalargumentexception-no-enum-constant-)  
    - [5.3 Error: Could not find or load main class ...](#53-error-could-not-find-or-load-main-class-)  
@@ -37,14 +37,14 @@
    - [5.12 Failed to create TrustManager ...](#512-failed-to-create-trustmanager-)  
    - [5.13 Pod "kafka-0" is invalid ...](#513-pod-kafka-0-is-invalid-)  
    - [5.14 kafka.zookeeper.ZooKeeperClientTimeoutException](#514-kafkazookeeperzookeeperclienttimeoutexception)  
-6. [Visual Explanations (Diagrams)](#visual-explanations-diagrams)  
+[6. Visual Explanations (Diagrams)](#visual-explanations-diagrams)
    - [6.1 Overall Architecture Diagram](#61-overall-architecture-diagram)  
    - [6.2 Certificate Hierarchy Diagram](#62-certificate-hierarchy-diagram)  
    - [6.3 mTLS Handshake Flow Diagram](#63-mtls-handshake-flow-diagram)  
    - [6.4 InitContainer Process Diagram](#64-initcontainer-process-diagram)  
    - [6.5 Confluent `dub` Configuration Flow Diagram](#65-confluent-dub-configuration-flow-diagram)  
-7. [Verification](#verification)  
-8. [Further Steps](#further-steps)  
+[7. Verification](#verification)
+[8. Further Steps](#further-steps)
 
 
  ## 1. Introduction
