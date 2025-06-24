@@ -274,61 +274,61 @@ Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incompl
  ### 6.1 Overall Architecture Diagram
 
  This diagram illustrates the high-level components and their communication within the Minikube environment.
-  ```mermaid
- graph LR
-     subgraph Minikube Cluster
-         subgraph Control Plane
-             kube-apiserver
-             kube-scheduler
-             kube-controller-manager
-         end
+ ```mermaid
+graph LR
+   subgraph Minikube Cluster
+       subgraph Control Plane
+           kube-apiserver
+           kube-scheduler
+           kube-controller-manager
+       end
 
-         subgraph Worker Node (minikube)
-             kubelet
-             kube-proxy
-             ContainerRuntime
+       subgraph "Worker Node - minikube"
+           kubelet
+           kube-proxy
+           ContainerRuntime
 
-             subgraph kafka-cluster Namespace
-                 subgraph Zookeeper Ensemble
-                     ZkPod1[Zookeeper Pod 0]
-                     ZkPod2[Zookeeper Pod 1]
-                     ZkPod3[Zookeeper Pod 2]
-                     ZkSvc[Zookeeper Service]
-                 end
+           subgraph kafka-cluster Namespace
+               subgraph Zookeeper Ensemble
+                   ZkPod1[Zookeeper Pod 0]
+                   ZkPod2[Zookeeper Pod 1]
+                   ZkPod3[Zookeeper Pod 2]
+                   ZkSvc[Zookeeper Service]
+               end
 
-                 subgraph Kafka Cluster
-                     KafkaPod1[Kafka Pod 0]
-                     KafkaPod2[Kafka Pod 1]
-                     KafkaPod3[Kafka Pod 2]
-                     KafkaHeadlessSvc[Kafka Headless Service]
-                     KafkaSvc[Kafka Service]
-                 end
+               subgraph Kafka Cluster
+                   KafkaPod1[Kafka Pod 0]
+                   KafkaPod2[Kafka Pod 1]
+                   KafkaPod3[Kafka Pod 2]
+                   KafkaHeadlessSvc[Kafka Headless Service]
+                   KafkaSvc[Kafka Service]
+               end
 
-                 subgraph Cert-Manager
-                     CertManagerPod[cert-manager Pod]
-                     CAIssuer[CA Issuer]
-                     Certificates[Certificates]
-                 end
-             end
-         end
-     end
+               subgraph Cert-Manager
+                   CertManagerPod[cert-manager Pod]
+                   CAIssuer[CA Issuer]
+                   Certificates[Certificates]
+               end
+           end
+       end
+   end
 
-     User -- kubectl --> kube-apiserver
-     CertManagerPod -- Issues Certs --> Certificates
-     Certificates -- Stores in --> K8sSecrets[Kubernetes Secrets]
-     ZkPod1 <--> ZkPod2
-     ZkPod1 <--> ZkPod3
-     ZkPod1 -- mTLS --> ZkSvc
-     KafkaPod1 <--> KafkaPod2
-     KafkaPod1 <--> KafkaPod3
-     KafkaPod1 -- mTLS --> KafkaHeadlessSvc
-     KafkaPod1 -- mTLS --> KafkaSvc
-     KafkaPod1 -- mTLS --> ZkSvc
-     KafkaPod2 -- mTLS --> ZkSvc
-     KafkaPod3 -- mTLS --> ZkSvc
-     K8sSecrets -- Mounted by --> ZkPod1
-     K8sSecrets -- Mounted by --> KafkaPod1
- ```
+   User -- kubectl --> kube-apiserver
+   CertManagerPod -- Issues Certs --> Certificates
+   Certificates -- Stores in --> K8sSecrets[Kubernetes Secrets]
+   ZkPod1 <--> ZkPod2
+   ZkPod1 <--> ZkPod3
+   ZkPod1 -- mTLS --> ZkSvc
+   KafkaPod1 <--> KafkaPod2
+   KafkaPod1 <--> KafkaPod3
+   KafkaPod1 -- mTLS --> KafkaHeadlessSvc
+   KafkaPod1 -- mTLS --> KafkaSvc
+   KafkaPod1 -- mTLS --> ZkSvc
+   KafkaPod2 -- mTLS --> ZkSvc
+   KafkaPod3 -- mTLS --> ZkSvc
+   K8sSecrets -- Mounted by --> ZkPod1
+   K8sSecrets -- Mounted by --> KafkaPod1
+```
 
  ### 6.2 Certificate Hierarchy Diagram
 
