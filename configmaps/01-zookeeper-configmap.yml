@@ -4,43 +4,11 @@ metadata:
   name: zookeeper-config
   namespace: kafka-cluster
 data:
-  zookeeper.properties.template: | # This is the new key for the template
-    # Zookeeper data directory
-    dataDir=/var/lib/zookeeper/data
-    dataLogDir=/var/lib/zookeeper/log
-
-    # Client ports
-    # clientPort=2181 # Standard non-secure port (often still defined)
-    secureClientPort=2281
-
-    # SSL Configuration
-    serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory
-    # For client connections (e.g., Kafka to Zookeeper)
-    ssl.clientAuth=needed # 'needed' allows clients to connect if they present a valid cert, 'required' forces mTLS.
-                          # Choose based on whether all clients (Kafka) will be configured for mTLS to ZK.
-    ssl.keyStore.location=/mnt/ssl-jks/zookeeper.server.keystore.jks
-    ssl.keyStore.password=changeitdev # Use plain-text password
-    ssl.trustStore.location=/mnt/ssl-jks/zookeeper.server.truststore.jks # Should trust CAs of Kafka, C3, etc.
-    ssl.trustStore.password=changeitdev # Use plain-text password
-
-    # Basic Zookeeper settings
-    tickTime=2000
-    initLimit=10
-    syncLimit=5
-    autopurge.snapRetainCount=3
-    autopurge.purgeInterval=1
-    maxClientCnxns=60
-    standaloneEnabled=false
-    admin.enableServer=true # Disable non-secure admin server
-    admin.serverPort=8080 # For metrics and admin commands
-    4lw.commands.whitelist=ruok,stat,srvr # Whitelist ruok for probes, and stat/srvr for monitoring
-
-    server.0=zookeeper-0.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-    server.1=zookeeper-1.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-    server.2=zookeeper-2.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-
-    # Ensure this is commented out or set to false if not needed for other substitutions
-  # You can add log4j.properties here as well if needed
-  # log4j.properties: |
-  #   zookeeper.root.logger=INFO, CONSOLE
-  #   ...
+  zookeeper.properties.template: |
+    # The Confluent entrypoint script will populate all other properties
+    # from the ZOOKEEPER_* environment variables defined in the StatefulSet.
+    # We only need to provide the properties that cannot be set via environment
+    # variables, which is the list of quorum servers.
+    server.1=zookeeper-0.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
+    server.2=zookeeper-1.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
+    server.3=zookeeper-2.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888

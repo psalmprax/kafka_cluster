@@ -25,6 +25,10 @@ spec:
         - name: keystore-truststore-init
           image: openjdk:11-jre-slim # Or your preferred image with keytool
           env:
+            - name: POD_NAMESPACE # Pass namespace for advertised listener
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: KAFKA_SERVER_KEYSTORE_PASSWORD
               valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEYSTORE_PASSWORD}}
             - name: KAFKA_SERVER_KEY_PASSWORD # For the key within the keystore
@@ -35,13 +39,110 @@ spec:
               valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}}
             - name: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD
               valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD}}
+            # Define paths for password files that dub script will read
+            - name: KAFKA_SERVER_KEYSTORE_PASSWORD_FILE
+              value: "/etc/kafka/secrets/kafka.server.keystore.password"
+            - name: KAFKA_SERVER_KEY_PASSWORD_FILE
+              value: "/etc/kafka/secrets/kafka.server.key.password"
+            - name: KAFKA_SERVER_TRUSTSTORE_PASSWORD_FILE
+              value: "/etc/kafka/secrets/kafka.server.truststore.password"
+            - name: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD_FILE
+              value: "/etc/kafka/secrets/kafka.zkclient.keystore.password"
+            - name: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD_FILE
+              value: "/etc/kafka/secrets/kafka.zkclient.truststore.password"
           command:
             - "/bin/bash"
             - "-ecx"
-            - "set -e\necho \"Starting JKS generation for Kafka\"\nSSL_DIR=\"/mnt/ssl-secrets\"\nJKS_DIR=\"/mnt/ssl-jks\"\nmkdir -p ${JKS_DIR}\n\nSERVER_KEYSTORE_PATH=\"${JKS_DIR}/kafka.server.keystore.jks\"\nSERVER_TRUSTSTORE_PATH=\"${JKS_DIR}/kafka.server.truststore.jks\"\nZKCLIENT_KEYSTORE_PATH=\"${JKS_DIR}/kafka.zkclient.keystore.jks\"\nZKCLIENT_TRUSTSTORE_PATH=\"${JKS_DIR}/kafka.zkclient.truststore.jks\"\n\necho \"Creating Kafka Server Keystore ${SERVER_KEYSTORE_PATH}\"\nopenssl pkcs12 -export -in ${SSL_DIR}/kafka-server-tls/tls.crt -inkey ${SSL_DIR}/kafka-server-tls/tls.key \\\n  -name kafka -CAfile ${SSL_DIR}/kafka-server-tls/ca.crt -caname intermediateca \\\n  -out /tmp/kafka.server.p12 -password pass:${KAFKA_SERVER_KEYSTORE_PASSWORD} \n\nkeytool -importkeystore -srckeystore /tmp/kafka.server.p12 -srcstoretype PKCS12 -srcstorepass ${KAFKA_SERVER_KEYSTORE_PASSWORD} \\\n  -destkeystore ${SERVER_KEYSTORE_PATH} -deststoretype JKS -deststorepass ${KAFKA_SERVER_KEYSTORE_PASSWORD} \\\n  -destkeypass ${KAFKA_SERVER_KEY_PASSWORD} -noprompt\n\necho \"Creating Kafka Server Truststore ${SERVER_TRUSTSTORE_PATH}\"\nkeytool -importcert -alias rootca -keystore ${SERVER_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/root-ca/ca.crt \\\n  -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt\nkeytool -importcert -alias intermediateca -keystore ${SERVER_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/intermediate-ca/ca.crt \\\n  -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt\n\necho \"Creating Kafka ZKClient Keystore ${ZKCLIENT_KEYSTORE_PATH} (using server cert)\"\n# Re-using the server cert/key for ZK client authentication\nopenssl pkcs12 -export -in ${SSL_DIR}/kafka-server-tls/tls.crt -inkey ${SSL_DIR}/kafka-server-tls/tls.key \\\n  -name kafkazkclient -CAfile ${SSL_DIR}/kafka-server-tls/ca.crt -caname intermediateca \\\n  -out /tmp/kafka.zkclient.p12 -password pass:${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \n\nkeytool -importkeystore -srckeystore /tmp/kafka.zkclient.p12 -srcstoretype PKCS12 -srcstorepass ${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \\\n  -destkeystore ${ZKCLIENT_KEYSTORE_PATH} -deststoretype JKS -deststorepass ${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD} \\\n  -destkeypass ${KAFKA_SERVER_KEY_PASSWORD} -noprompt\n\necho \"Creating Kafka ZKClient Truststore ${ZKCLIENT_TRUSTSTORE_PATH}\"\nkeytool -importcert -alias rootca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/root-ca/ca.crt \\\n  -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt\nkeytool -importcert -alias intermediateca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \\\n  -file ${SSL_DIR}/intermediate-ca/ca.crt \\\n  -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt\n\necho \"JKS generation complete.\"\nls -l ${JKS_DIR}\n"
+            - |
+              set -e
+              echo "Starting JKS generation for Kafka"
+              SSL_DIR="/mnt/ssl-secrets"
+              JKS_DIR="/etc/kafka/secrets" # Change JKS output directory to match dub's expectation
+              mkdir -p ${JKS_DIR}
+              # Only clean the JKS directory
+              rm -f ${JKS_DIR}/*
+
+              SERVER_KEYSTORE_PATH="${JKS_DIR}/kafka.server.keystore.jks"
+              SERVER_TRUSTSTORE_PATH="${JKS_DIR}/kafka.server.truststore.jks"
+              ZKCLIENT_KEYSTORE_PATH="${JKS_DIR}/kafka.zkclient.keystore.jks"
+              ZKCLIENT_TRUSTSTORE_PATH="${JKS_DIR}/kafka.zkclient.truststore.jks"
+
+              echo "Creating full CA chain file for keystores"
+              CHAIN_FILE="/tmp/ca-chain.crt"
+              cat "${SSL_DIR}/intermediate-ca/tls.crt" "${SSL_DIR}/root-ca/ca.crt" > "${CHAIN_FILE}"
+
+              echo "Creating Kafka Server Keystore ${SERVER_KEYSTORE_PATH}"
+              # Create a temporary PKCS12 file using the server cert and explicitly providing the CA chain
+              openssl pkcs12 -export -in "${SSL_DIR}/kafka-server-tls/tls.crt" -inkey "${SSL_DIR}/kafka-server-tls/tls.key" \
+                -certfile "${CHAIN_FILE}" -name kafka -out /tmp/kafka.server.temp.p12 \
+                -password pass:"${KAFKA_SERVER_KEYSTORE_PASSWORD}" -passout pass:"${KAFKA_SERVER_KEYSTORE_PASSWORD}"
+              # Convert the temporary PKCS12 to the final JKS keystore
+              keytool -importkeystore -srckeystore /tmp/kafka.server.temp.p12 -srcstoretype PKCS12 -srcstorepass "${KAFKA_SERVER_KEYSTORE_PASSWORD}" \
+                -destkeystore "${SERVER_KEYSTORE_PATH}" -deststoretype JKS -deststorepass "${KAFKA_SERVER_KEYSTORE_PASSWORD}" -destkeypass "${KAFKA_SERVER_KEY_PASSWORD}" -noprompt
+
+              echo "Verifying Kafka Server Keystore ${SERVER_KEYSTORE_PATH}..."
+              keytool -list -v -keystore "${SERVER_KEYSTORE_PATH}" -storepass "${KAFKA_SERVER_KEYSTORE_PASSWORD}" -noprompt || \
+                (echo "ERROR: JKS keystore verification failed!" && exit 1)
+
+              echo "Creating Kafka Server Truststore ${SERVER_TRUSTSTORE_PATH}"
+              keytool -importcert -alias rootca -keystore ${SERVER_TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/root-ca/ca.crt \
+                -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt
+              keytool -importcert -alias intermediateca -keystore ${SERVER_TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/intermediate-ca/tls.crt \
+                -storepass ${KAFKA_SERVER_TRUSTSTORE_PASSWORD} -noprompt
+
+              echo "Creating Kafka ZKClient Keystore ${ZKCLIENT_KEYSTORE_PATH} (using server cert)"
+              # Re-using the server cert/key for ZK client authentication
+              # Create a temporary PKCS12 file using the server cert and explicitly providing the CA chain
+              openssl pkcs12 -export -in "${SSL_DIR}/kafka-server-tls/tls.crt" -inkey "${SSL_DIR}/kafka-server-tls/tls.key" \
+                -certfile "${CHAIN_FILE}" -name kafkazkclient -out /tmp/kafka.zkclient.temp.p12 \
+                -password pass:"${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}" -passout pass:"${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}"
+              keytool -importkeystore -srckeystore /tmp/kafka.zkclient.temp.p12 -srcstoretype PKCS12 -srcstorepass "${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}" \
+                -destkeystore "${ZKCLIENT_KEYSTORE_PATH}" -deststoretype JKS -deststorepass "${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}" -destkeypass "${KAFKA_SERVER_KEY_PASSWORD}" -noprompt
+
+              echo "Verifying Kafka ZKClient Keystore ${ZKCLIENT_KEYSTORE_PATH}..."
+              keytool -list -v -keystore "${ZKCLIENT_KEYSTORE_PATH}" -storepass "${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}" -noprompt || \
+                (echo "ERROR: JKS keystore verification failed!" && exit 1)
+
+              echo "Creating Kafka ZKClient Truststore ${ZKCLIENT_TRUSTSTORE_PATH}"
+              keytool -importcert -alias rootca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/root-ca/ca.crt \
+                -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt
+              keytool -importcert -alias intermediateca -keystore ${ZKCLIENT_TRUSTSTORE_PATH} \
+                -file ${SSL_DIR}/intermediate-ca/tls.crt \
+                -storepass ${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD} -noprompt
+
+              # Write passwords to files for dub script using printf for robustness
+              printf "%s" "${KAFKA_SERVER_KEYSTORE_PASSWORD}" > "${JKS_DIR}/kafka.server.keystore.password" 2>&1 || { echo "ERROR: Failed to write keystore password file" && exit 1; }
+              printf "%s" "${KAFKA_SERVER_KEY_PASSWORD}" > "${JKS_DIR}/kafka.server.key.password" 2>&1 || { echo "ERROR: Failed to write key password file" && exit 1; }
+              printf "%s" "${KAFKA_SERVER_TRUSTSTORE_PASSWORD}" > "${JKS_DIR}/kafka.server.truststore.password" 2>&1 || { echo "ERROR: Failed to write truststore password file" && exit 1; }
+              printf "%s" "${KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}" > "${JKS_DIR}/kafka.zkclient.keystore.password" 2>&1 || { echo "ERROR: Failed to write ZK client keystore password file" && exit 1; }
+              printf "%s" "${KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD}" > "${JKS_DIR}/kafka.zkclient.truststore.password" 2>&1 || { echo "ERROR: Failed to write ZK client truststore password file" && exit 1; }
+
+              # Ensure password files are readable only by appuser
+
+              chmod 600 "${JKS_DIR}/kafka.server.keystore.password"
+              chmod 600 "${JKS_DIR}/kafka.server.key.password"
+              chmod 600 "${JKS_DIR}/kafka.server.truststore.password"
+              chmod 600 "${JKS_DIR}/kafka.zkclient.keystore.password"
+              chmod 600 "${JKS_DIR}/kafka.zkclient.truststore.password"
+
+              # Unset password environment variables from initContainer's scope
+              unset KAFKA_SERVER_KEYSTORE_PASSWORD
+              unset KAFKA_SERVER_KEY_PASSWORD
+              unset KAFKA_SERVER_TRUSTSTORE_PASSWORD
+              unset KAFKA_ZKCLIENT_KEYSTORE_PASSWORD
+              unset KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD
+              
+              echo "Setting permissions for Kafka user..."
+              chown -R 1000:1000 "${JKS_DIR}"
+
+              echo "Kafka InitContainer finished."
+              ls -lR "${JKS_DIR}"
           volumeMounts:
-            - name: ssl-jks
-              mountPath: /mnt/ssl-jks
+            - name: kafka-secrets-jks # New volume for JKS files
+              mountPath: /etc/kafka/secrets # Mount JKS files directly where dub expects them
             - name: kafka-server-tls-secret # Kafka's own server cert/key
               mountPath: /mnt/ssl-secrets/kafka-server-tls
               readOnly: true
@@ -53,7 +154,16 @@ spec:
               readOnly: true
       containers:
         - name: kafka
-          image: confluentinc/cp-kafka:7.5.0 # Use a specific, recent version
+          image: confluentinc/cp-kafka:7.6.1 # Updated to a newer stable version
+          command:
+            - "/bin/bash"
+            - "-c"
+            - |
+              # Dynamically set the advertised listener for the Confluent entrypoint script
+              export KAFKA_ADVERTISED_LISTENERS="INTERNAL_SSL://${POD_NAME}.kafka-headless.${POD_NAMESPACE}.svc.cluster.local:9093"
+              # The dub script will generate server.properties from the KAFKA_* env vars
+              # Execute the original entrypoint
+              exec /etc/confluent/docker/run
           ports:
             - name: internal-ssl
               containerPort: 9093
@@ -61,55 +171,93 @@ spec:
               containerPort: 9094
           env:
             - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
             - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            # Dynamically set broker.id from pod name (e.g., kafka-0 -> 0)
-            - name: KAFKA_BROKER_ID_COMMAND
-              value: "echo $(POD_NAME) | awk -F'-' '{print $$NF}'"
-            # Dynamically set advertised.listeners
-            - name: KAFKA_ADVERTISED_LISTENERS_COMMAND
-              value: "echo INTERNAL_SSL://$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093"
-            # Passwords for server.properties placeholders (if your image entrypoint substitutes them)
-            # Or used by Kafka Java process directly
-            - name: KAFKA_ADVERTISED_LISTENERS # Set a placeholder to satisfy initial 'dub ensure' check
-              value: "PLAINTEXT://please-override-me:9092"
-            - name: KAFKA_ZOOKEEPER_CONNECT # Explicitly set for the startup script
-              value: "zookeeper-svc.kafka-cluster.svc.cluster.local:2281"
-            - name: KAFKA_SSL_KEYSTORE_PASSWORD
-              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEYSTORE_PASSWORD}}
-            - name: KAFKA_SSL_KEY_PASSWORD
-              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_KEY_PASSWORD}}
-            - name: KAFKA_SSL_TRUSTSTORE_PASSWORD
-              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_SERVER_TRUSTSTORE_PASSWORD}}
-            - name: KAFKA_ZOOKEEPER_SSL_KEYSTORE_PASSWORD
-              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD}}
-            - name: KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_PASSWORD
-              valueFrom: {secretKeyRef: {name: kafka-credentials, key: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD}}
-            # Other Kafka configurations (many are in the ConfigMap)
-            - name: KAFKA_LOG4J_OPTS
-              value: "-Dlog4j.configuration=file:/etc/kafka/config/log4j.properties" # If you add log4j.properties to ConfigMap
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - name: KAFKA_HEAP_OPTS
               value: "-Xms1G -Xmx1G" # Adjust as needed
+            - name: KAFKA_ZOOKEEPER_CLIENT_CNXN_SOCKET
+              value: org.apache.zookeeper.ClientCnxnSocketNetty
+            # Let dub script handle broker.id by parsing the hostname ordinal
+            # KAFKA_BROKER_ID is not set
+            # Other settings that are handled by dub from env vars
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data/logs"
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
-              value: "3" # Should be <= number of brokers
-            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
               value: "3"
-            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
-              value: "2"
-              # If using KRaft, uncomment and adjust these:
-              # - name: KAFKA_PROCESS_ROLES
-              #   value: "broker,controller" # Or just "broker"
-              # - name: KAFKA_NODE_ID_COMMAND
-              #   value: "echo $(POD_NAME) | awk -F'-' '{print $NF}'" # Corrected $$NF to $NF
-              # - name: KAFKA_CONTROLLER_QUORUM_VOTERS_COMMAND
-              #   value: "for i in $(seq 0 2); do echo -n \"$i@kafka-$i.kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9094,\"; done | sed 's/,$//'" # Corrected $$i to $i
-          # The Confluent Kafka images have entrypoints that can use these env vars.
-          # Ensure your server.properties from ConfigMap is mounted correctly.
+            # Explicitly provide all SSL configuration via environment variables
+            - name: KAFKA_LISTENERS
+              value: "INTERNAL_SSL://0.0.0.0:9093"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "INTERNAL_SSL:SSL"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "INTERNAL_SSL"
+            - name: KAFKA_SSL_CLIENT_AUTH
+              value: "required"
+            - name: KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM
+              value: "https"
+            - name: KAFKA_SSL_KEYSTORE_LOCATION
+              value: "/etc/kafka/secrets/kafka.server.keystore.jks" # Update path to new JKS location
+            - name: KAFKA_SSL_KEYSTORE_TYPE
+              value: "JKS"
+            - name: KAFKA_SSL_KEYSTORE_PASSWORD
+              value: "kafka.server.keystore.password" # Point to relative filename
+            # KAFKA_SSL_KEYSTORE_CREDENTIALS is required by the dub script
+            - name: KAFKA_SSL_KEYSTORE_CREDENTIALS
+              value: "kafka.server.keystore.password" # Point to relative filename
+            - name: KAFKA_SSL_KEY_PASSWORD
+              value: "kafka.server.key.password" # Point to relative filename
+            # The dub script uses KAFKA_SSL_KEY_CREDENTIALS as an alias for the key password
+            - name: KAFKA_SSL_KEY_CREDENTIALS
+              value: "kafka.server.key.password" # Point to relative filename
+            - name: KAFKA_SSL_KEYSTORE_FILENAME
+              value: "kafka.server.keystore.jks"
+            - name: KAFKA_SSL_TRUSTSTORE_FILENAME
+              value: "kafka.server.truststore.jks"
+            - name: KAFKA_SSL_TRUSTSTORE_LOCATION
+              value: "/etc/kafka/secrets/kafka.server.truststore.jks" # Update path to new JKS location
+            - name: KAFKA_SSL_TRUSTSTORE_TYPE
+              value: "JKS"
+            - name: KAFKA_SSL_TRUSTSTORE_PASSWORD
+              value: "kafka.server.truststore.password" # Point to relative filename
+            # KAFKA_SSL_TRUSTSTORE_CREDENTIALS is required by the dub script
+            - name: KAFKA_SSL_TRUSTSTORE_CREDENTIALS
+              value: "kafka.server.truststore.password" # Point to relative filename
+            - name: KAFKA_SSL_ENABLED_PROTOCOLS
+              value: "TLSv1.2,TLSv1.3"
+            - name: KAFKA_SSL_CIPHER_SUITES
+              value: "TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256"
+            # Zookeeper client SSL configuration (for Kafka's connection to ZK)
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "zookeeper-svc.kafka-cluster.svc.cluster.local:2281"
+            - name: KAFKA_ZOOKEEPER_SSL_CLIENT_ENABLE
+              value: "true"
+            - name: KAFKA_ZOOKEEPER_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM
+              value: "HTTPS"
+            - name: KAFKA_ZOOKEEPER_SSL_KEYSTORE_LOCATION
+              value: "/etc/kafka/secrets/kafka.zkclient.keystore.jks" # Update path to new JKS location
+            - name: KAFKA_ZOOKEEPER_SSL_KEYSTORE_TYPE
+              value: "JKS"
+            - name: KAFKA_ZOOKEEPER_SSL_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials # Correct secret name
+                  key: KAFKA_ZKCLIENT_KEYSTORE_PASSWORD
+            - name: KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_LOCATION
+              value: "/etc/kafka/secrets/kafka.zkclient.truststore.jks"
+              # value: "/etc/kafka/secrets/kafka.zkclient.truststore.jks" # Update path to new JKS location
+            - name: KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_TYPE
+              value: "JKS"
+            - name: KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kafka-credentials
+                  key: KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD
+            # - name: KAFKA_ZOOKEEPER_SSL_PROTOCOL
+            # value: "TLSv1.2" # Zookeeper only supports TLSv1.2 for client connections
+            - name: KAFKA_ZOOKEEPER_SSL_CIPHER_SUITES
+              value: "TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256"
+            # Zookeeper only supports TLSv1.2 for client connections
           resources: # Add resource requests and limits
             requests:
               memory: "2Gi" # Example
@@ -120,29 +268,36 @@ spec:
           volumeMounts:
             - name: kafka-data
               mountPath: /var/lib/kafka/data
-            - name: kafka-config # Mounts server.properties (and potentially log4j.properties)
-              mountPath: /etc/kafka/config # Default conf dir for many Kafka images
-            - name: ssl-jks # Mount the JKS files prepared by initContainer
-              mountPath: /mnt/ssl-jks # Must match paths in server.properties
+            - name: kafka-secrets-jks # Mount the JKS files prepared by initContainer
+              mountPath: /etc/kafka/secrets # Mount JKS files directly where dub expects them
+              readOnly: true
+            - name: intermediate-ca-secret # Mount for probe's -CAfile
+              mountPath: /mnt/ssl-secrets/intermediate-ca # Must match path in probe
+              readOnly: true
+            - name: kafka-server-tls-secret # Mount for probe's client cert/key
+              mountPath: /mnt/ssl-secrets/kafka-server-tls
               readOnly: true
           readinessProbe:
-            tcpSocket:
-              port: 9093 # Internal SSL listener
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "openssl s_client -connect localhost:9093 -tls1_2 -cert /mnt/ssl-secrets/kafka-server-tls/tls.crt -key /mnt/ssl-secrets/kafka-server-tls/tls.key -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
             initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
           livenessProbe:
-            tcpSocket:
-              port: 9093
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - "openssl s_client -connect localhost:9093 -tls1_2 -cert /mnt/ssl-secrets/kafka-server-tls/tls.crt -key /mnt/ssl-secrets/kafka-server-tls/tls.key -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
             initialDelaySeconds: 60
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
       volumes:
-        - name: kafka-config
-          configMap:
-            name: kafka-config
-        - name: ssl-jks
+        - name: kafka-secrets-jks # New volume for JKS files
           emptyDir: {}
         - name: kafka-server-tls-secret
           secret:

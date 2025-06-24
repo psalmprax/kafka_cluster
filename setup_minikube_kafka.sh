@@ -13,7 +13,7 @@ MINIKUBE_DRIVER="docker" # Or hyperkit, virtualbox, kvm2 - choose what's best fo
 KAFKA_NAMESPACE="kafka-cluster"
 
 # Define base path for your manifests
-MANIFEST_BASE_PATH="/home/psalmprax/DEVELOPMENT_ENV/kafka_cluster"
+MANIFEST_BASE_PATH="."
 # Path for Root and Intermediate CA cert-manager manifests
 CERT_MANAGER_CA_MANIFEST_PATH="${MANIFEST_BASE_PATH}/ca_manifests" # Ensure 01-root-ca.yaml & 02-intermediate-ca.yaml are here
 
@@ -28,10 +28,28 @@ check_command() {
   fi
 }
 
-echo "--- Starting Minikube ---"
+echo "--- Checking prerequisites ---"
 check_command "minikube"
 check_command "kubectl"
+check_command "docker"
 
+# --- Ensure user is in the 'docker' group for the Minikube docker driver ---
+if ! getent group docker > /dev/null; then
+    echo "Error: The 'docker' group does not exist. Please install Docker correctly."
+    echo "Follow the instructions at https://docs.docker.com/engine/install/ubuntu/"
+    exit 1
+fi
+
+if ! id -nG "$USER" | grep -qw "docker"; then
+    echo "User '$USER' is not in the 'docker' group. This is required to use the docker driver."
+    echo "Adding user to the 'docker' group. You will need to enter your password."
+    sudo usermod -aG docker "$USER" && newgrp docker
+    echo "IMPORTANT: Group change will not take effect until you start a new session."
+    echo "Please log out and log back in, or run 'newgrp docker' in your terminal and then re-run this script."
+    exit 1
+fi
+
+echo "--- Starting Minikube ---"
 if ! minikube status --format "{{.Host}}" | grep -q "Running"; then
   minikube start --cpus "${MINIKUBE_CPUS}" --memory "${MINIKUBE_MEMORY}" --disk-size "${MINIKUBE_DISK_SIZE}" --driver "${MINIKUBE_DRIVER}"
 else
@@ -84,6 +102,13 @@ echo "--- Applying Cert-Manager Issuers and CA Certificates (3-stage) ---"
 kubectl apply -f "${CERT_MANAGER_CA_MANIFEST_PATH}/01-root-ca.yaml" -n "${KAFKA_NAMESPACE}"
 echo "Waiting for root-ca-secret to be created (via kafka-root-ca Certificate)..."
 kubectl wait --for=condition=Ready certificate/kafka-root-ca -n "${KAFKA_NAMESPACE}" --timeout=120s
+  # Verify the Root CA secret has been created
+  if ! kubectl get secret root-ca-secret -n "${KAFKA_NAMESPACE}" -o yaml > /dev/null; then
+    echo "Error: root-ca-secret was not created successfully."
+    exit 1
+  else
+    echo "root-ca-secret successfully created."
+  fi
 kubectl apply -f "${CERT_MANAGER_CA_MANIFEST_PATH}/02-intermediate-ca.yaml" -n "${KAFKA_NAMESPACE}"
 echo "Waiting for intermediate-ca-secret to be created (via kafka-intermediate-ca Certificate)..."
 kubectl wait --for=condition=Ready certificate/kafka-intermediate-ca -n "${KAFKA_NAMESPACE}" --timeout=120s
@@ -95,6 +120,13 @@ kubectl apply -f "${MANIFEST_BASE_PATH}/tls_ssl/04-zk-server-cert.yml" -n "${KAF
 kubectl apply -f "${MANIFEST_BASE_PATH}/tls_ssl/03-kafka-server-cert.yml" -n "${KAFKA_NAMESPACE}"
 
 echo ""
+# Check the intermediate certificate
+if ! kubectl get secret intermediate-ca-secret -n "${KAFKA_NAMESPACE}" -o yaml > /dev/null; then
+    echo "Error: intermediate-ca-secret was not created successfully."
+    exit 1
+  else
+    echo "intermediate-ca-secret successfully created."
+  fi
 echo "--- Waiting for leaf certificates to be issued ---"
 echo "Checking Zookeeper certificate..."
 kubectl wait --for=condition=Ready certificate/zookeeper-server-cert -n "${KAFKA_NAMESPACE}" --timeout=120s
@@ -165,4 +197,3 @@ echo "   - Schema Registry, ksqlDB, Control Center, etc."
 # 5.  **Run the script:** `./setup_minikube_kafka.sh`
 
 # This script automates the initial Minikube setup and deployment of your foundational Kubernetes resources. After it completes, you'll proceed to deploy your Zookeeper and Kafka StatefulSets, followed by other components.
-

@@ -13,6 +13,7 @@ data:
     log.dirs=/var/lib/kafka/data
 
     # Zookeeper connection
+    zookeeper.clientCnxnSocket=org.apache.zookeeper.ClientCnxnSocketNetty
     zookeeper.connect=zookeeper-svc.kafka-cluster.svc.cluster.local:2281 # Secure ZK port
 
     ############################# Socket Server Settings #############################
@@ -27,23 +28,24 @@ data:
     # security.inter.broker.protocol=SSL # Already implied by inter.broker.listener.name mapping
 
     # SSL Configuration for Kafka Listeners
-    ssl.keystore.location=/mnt/ssl-jks/kafka.server.keystore.jks
+    ssl.keystore.location=/etc/kafka/secrets/kafka.server.keystore.jks # Corrected path
     ssl.keystore.password=__KAFKA_SERVER_KEYSTORE_PASSWORD__
     ssl.key.password=__KAFKA_SERVER_KEY_PASSWORD__
-    ssl.truststore.location=/mnt/ssl-jks/kafka.server.truststore.jks
+    ssl.truststore.location=/etc/kafka/secrets/kafka.server.truststore.jks # Corrected path
     ssl.truststore.password=__KAFKA_SERVER_TRUSTSTORE_PASSWORD__
     ssl.client.auth=required # Enforce mTLS from clients and for inter-broker
     ssl.endpoint.identification.algorithm=https # Recommended for hostname verification
     ssl.enabled.protocols=TLSv1.2,TLSv1.3
     ssl.protocol=TLSv1.3 # Preferred protocol
+    ssl.cipher.suites=TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256
 
     # SSL Configuration for Kafka Client to Zookeeper
     zookeeper.ssl.client.enable=true
-    zookeeper.ssl.keystore.location=/mnt/ssl-jks/kafka.zkclient.keystore.jks
-    zookeeper.ssl.keystore.password=__KAFKA_ZKCLIENT_KEYSTORE_PASSWORD__
-    zookeeper.ssl.truststore.location=/mnt/ssl-jks/kafka.zkclient.truststore.jks
-    zookeeper.ssl.truststore.password=__KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD__
-    zookeeper.ssl.protocol=TLSv1.3 # Or TLSv1.2
+    zookeeper.ssl.keystore.location=/etc/kafka/secrets/kafka.zkclient.keystore.jks # Corrected path
+    zookeeper.ssl.keystore.password=/etc/kafka/secrets/kafka.zkclient.keystore.password # Point to password file
+    zookeeper.ssl.truststore.location=/etc/kafka/secrets/kafka.zkclient.truststore.jks # Corrected path
+    zookeeper.ssl.truststore.password=/etc/kafka/secrets/kafka.zkclient.truststore.password # Point to password file
+    zookeeper.ssl.protocol=TLSv1.2 # Explicitly set protocol for ZK client
     zookeeper.ssl.endpoint.identification.algorithm=HTTPS # Hostname verification for ZK
 
     # KRaft mode settings (if applicable, otherwise remove or comment out)

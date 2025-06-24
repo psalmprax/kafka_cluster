@@ -14,7 +14,7 @@ spec:
     # For inter-broker and client communication within the StatefulSet
     - "kafka-0.kafka-headless.kafka-cluster.svc.cluster.local"
     - "kafka-1.kafka-headless.kafka-cluster.svc.cluster.local"
-    # - "kafka-2.kafka-headless.kafka-cluster.svc.cluster.local" # Add for all your Kafka replicas
+    - "kafka-2.kafka-headless.kafka-cluster.svc.cluster.local" # Add for all your Kafka replicas
     # For clients connecting via the headless service (resolves to any broker)
     - "kafka-headless.kafka-cluster.svc.cluster.local"
     # If you have a regular ClusterIP service for clients:
