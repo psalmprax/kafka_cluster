@@ -342,23 +342,24 @@ graph LR
 
  ```mermaid
  sequenceDiagram
-     participant Client
-     participant Server
+    participant Client
+    participant Server
 
-     Client->>Server: ClientHello (TLS versions, Ciphers, Client CAs)
-     Server->>Client: ServerHello (Selected TLS, Cipher, Server Cert Chain)
-     Client->>Client: Verify Server Cert Chain (using Client Truststore)
-     alt Server requires Client Auth
-         Client->>Server: Client Certificate (Client Cert Chain)
-         Client->>Server: ClientKeyExchange (Encrypted with Client Private Key)
-         Server->>Server: Verify Client Cert Chain (using Server Truststore)
-         Server->>Server: Decrypt ClientKeyExchange (using Server Private Key)
-     end
-     Client->>Server: ChangeCipherSpec
-     Client->>Server: Finished (Encrypted)
-     Server->>Client: ChangeCipherSpec
-     Server->>Client: Finished (Encrypted)
-     Client<->>Server: Application Data (Encrypted)
+    Client->>Server: ClientHello (TLS versions, Ciphers, Client CAs)
+    Server->>Client: ServerHello (Selected TLS, Cipher, Server Cert Chain)
+    Client->>Client: Verify Server Cert Chain (using Client Truststore)
+    alt Server requires Client Auth
+        Client->>Server: Client Certificate (Client Cert Chain)
+        Client->>Server: ClientKeyExchange (Encrypted with Client Private Key)
+        Server->>Server: Verify Client Cert Chain (using Server Truststore)
+        Server->>Server: Decrypt ClientKeyExchange (using Server Private Key)
+    end
+    Client->>Server: ChangeCipherSpec
+    Client->>Server: Finished (Encrypted)
+    Server->>Client: ChangeCipherSpec
+    Server->>Client: Finished (Encrypted)
+    Client->>Server: Application Data (Encrypted)
+    Server->>Client: Application Data (Encrypted)
  ```
 
  ### 6.4 InitContainer Process Diagram
