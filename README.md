@@ -269,7 +269,145 @@ Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incompl
      *   Ensure all Zookeeper client SSL parameters are correctly set in Kafka's configuration (as detailed in previous sections).
  *   **How to Avoid:** Ensure Zookeeper is fully stable before starting Kafka. Use robust connectivity checks.
 
- ## 6. Verification
+## 6. Visual Explanations (Diagrams)
+
+ ### 6.1 Overall Architecture Diagram
+
+ This diagram illustrates the high-level components and their communication within the Minikube environment.
+
+ ```mermaid
+ graph LR
+     subgraph Minikube Cluster
+         subgraph Control Plane
+             kube-apiserver
+             kube-scheduler
+             kube-controller-manager
+         end
+
+         subgraph Worker Node (minikube)
+             kubelet
+             kube-proxy
+             ContainerRuntime
+
+             subgraph kafka-cluster Namespace
+                 subgraph Zookeeper Ensemble
+                     ZkPod1[Zookeeper Pod 0]
+                     ZkPod2[Zookeeper Pod 1]
+                     ZkPod3[Zookeeper Pod 2]
+                     ZkSvc[Zookeeper Service]
+                 end
+
+                 subgraph Kafka Cluster
+                     KafkaPod1[Kafka Pod 0]
+                     KafkaPod2[Kafka Pod 1]
+                     KafkaPod3[Kafka Pod 2]
+                     KafkaHeadlessSvc[Kafka Headless Service]
+                     KafkaSvc[Kafka Service]
+                 end
+
+                 subgraph Cert-Manager
+                     CertManagerPod[cert-manager Pod]
+                     CAIssuer[CA Issuer]
+                     Certificates[Certificates]
+                 end
+             end
+         end
+     end
+
+     User -- kubectl --> kube-apiserver
+     CertManagerPod -- Issues Certs --> Certificates
+     Certificates -- Stores in --> K8sSecrets[Kubernetes Secrets]
+     ZkPod1 <--> ZkPod2
+     ZkPod1 <--> ZkPod3
+     ZkPod1 -- mTLS --> ZkSvc
+     KafkaPod1 <--> KafkaPod2
+     KafkaPod1 <--> KafkaPod3
+     KafkaPod1 -- mTLS --> KafkaHeadlessSvc
+     KafkaPod1 -- mTLS --> KafkaSvc
+     KafkaPod1 -- mTLS --> ZkSvc
+     KafkaPod2 -- mTLS --> ZkSvc
+     KafkaPod3 -- mTLS --> ZkSvc
+     K8sSecrets -- Mounted by --> ZkPod1
+     K8sSecrets -- Mounted by --> KafkaPod1
+ ```
+
+ ### 6.2 Certificate Hierarchy Diagram
+
+ This diagram illustrates the chain of trust from the self-signed Root CA down to the leaf certificates used by Zookeeper and Kafka.
+
+ ```mermaid
+ graph TD
+     RootCA[Root CA (Self-Signed)]
+     IntermediateCA[Intermediate CA]
+     ZkCert[Zookeeper Server Certificate]
+     KafkaCert[Kafka Server Certificate]
+
+     RootCA -- Signs --> IntermediateCA
+     IntermediateCA -- Signs --> ZkCert
+     IntermediateCA -- Signs --> KafkaCert
+ ```
+
+ ### 6.3 mTLS Handshake Flow Diagram
+
+ This sequence diagram visualizes the steps involved in a Mutual TLS (mTLS) handshake, highlighting the roles of certificates, keys, and truststores.
+
+ ```mermaid
+ sequenceDiagram
+     participant Client
+     participant Server
+
+     Client->>Server: ClientHello (TLS versions, Ciphers, Client CAs)
+     Server->>Client: ServerHello (Selected TLS, Cipher, Server Cert Chain)
+     Client->>Client: Verify Server Cert Chain (using Client Truststore)
+     alt Server requires Client Auth
+         Client->>Server: Client Certificate (Client Cert Chain)
+         Client->>Server: ClientKeyExchange (Encrypted with Client Private Key)
+         Server->>Server: Verify Client Cert Chain (using Server Truststore)
+         Server->>Server: Decrypt ClientKeyExchange (using Server Private Key)
+     end
+     Client->>Server: ChangeCipherSpec
+     Client->>Server: Finished (Encrypted)
+     Server->>Client: ChangeCipherSpec
+     Server->>Client: Finished (Encrypted)
+     Client<->>Server: Application Data (Encrypted)
+ ```
+
+ ### 6.4 InitContainer Process Diagram
+
+ This flowchart details the steps performed by the `initContainer` to prepare the Java keystores and truststores from raw certificate secrets.
+
+ ```mermaid
+ graph TD
+     A[Start InitContainer] --> B{Mount K8s Secrets<br>(Raw Certs & Passwords)}
+     B --> C[Read tls.crt, tls.key, CA.crt]
+     C --> D[Concatenate CA Chain<br>(intermediate + root)]
+     D --> E[Generate PKCS12 Keystore<br>(server.crt + server.key + CA Chain)]
+     E --> F[Convert PKCS12 to JKS Keystore]
+     F --> G[Import Root CA to JKS Truststore]
+     G --> H[Import Intermediate CA to JKS Truststore]
+     H --> I{Write Password Files<br>(e.g., kafka.server.keystore.password)}
+     I --> J[Set File Permissions (chmod 600)]
+     J --> K[Unset Password Env Vars]
+     K --> L[End InitContainer]
+ ```
+
+ ### 6.5 Confluent `dub` Configuration Flow Diagram
+
+ This diagram illustrates how the Confluent `dub` entrypoint script processes environment variables to generate the final `server.properties` and start the Kafka/Zookeeper process.
+
+ ```mermaid
+ graph TD
+     A[Start Main Container] --> B{Execute /etc/confluent/docker/run<br>(dub entrypoint)}
+     B --> C[Read KAFKA_* / ZOOKEEPER_* Env Vars]
+     C --> D{Process Env Vars<br>(e.g., _LOCATION, _FILENAME, _PASSWORD, _CREDENTIALS)}
+     D --> E{Validate Paths & Credentials<br>(e.g., `dub path ... exists`)}
+     E -- Validation Success --> F[Generate Internal server.properties]
+     E -- Validation Failed --> G[Exit with Error]
+     F --> H[Start Kafka/Zookeeper Java Process<br>(using generated properties)]
+     H --> I[Application Running]
+ ```
+
+ ## 7. Verification
 
  Once all pods are `Running` and show `RESTARTS: 0`:
  1.  **Check Pod Status:** `kubectl get pods -n kafka-cluster -o wide`
@@ -286,11 +424,9 @@ Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incompl
      ```
      Both `openssl s_client` commands should show a successful handshake and certificate chain.
 
- ## 7. Further Steps
+ ## 8. Further Steps
 
  Once your Kafka cluster is stable and secure, you can proceed with:
  *   Deploying Kafka clients to produce and consume messages.
  *   Integrating with other Confluent Platform components (Schema Registry, ksqlDB, Control Center).
  *   Setting up external access if required (e.g., NodePort, LoadBalancer, Ingress).
-
- This `README.md` should serve as a valuable resource for understanding and implementing a secure Kafka deployment on Kubernetes.
