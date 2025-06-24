@@ -378,14 +378,14 @@ graph LR
 
  ```mermaid
  graph TD
-    A[Start InitContainer] --> B{Mount K8s Secrets\n(Raw Certs & Passwords)}
+    A[Start InitContainer] --> B{Mount K8s Secrets (Raw Certs & Passwords)}
     B --> C[Read tls.crt, tls.key, CA.crt]
-    C --> D[Concatenate CA Chain\n(intermediate + root)]
-    D --> E[Generate PKCS12 Keystore\n(server.crt + server.key + CA Chain)]
+    C --> D[Concatenate CA Chain (intermediate + root)]
+    D --> E[Generate PKCS12 Keystore (server.crt + server.key + CA Chain)]
     E --> F[Convert PKCS12 to JKS Keystore]
     F --> G[Import Root CA to JKS Truststore]
     G --> H[Import Intermediate CA to JKS Truststore]
-    H --> I{Write Password Files\n(e.g., kafka.server.keystore.password)}
+    H --> I{Write Password Files (e.g., kafka.server.keystore.password)}
     I --> J[Set File Permissions (chmod 600)]
     J --> K[Unset Password Env Vars]
     K --> L[End InitContainer]
