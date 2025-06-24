@@ -2,11 +2,11 @@
 
  This `README.md` provides a comprehensive guide to deploying a secure Kafka cluster on Minikube using Confluent Platform Docker images, with a strong focus on Mutual TLS (mTLS) for all internal and external communication. It details the step-by-step process, highlights common pitfalls and errors encountered during the setup, and offers solutions and best practices to avoid them.
 
- ## Table of Contents
+
 ## Table of Contents
-1. [Introduction](#introduction)  
-2. [Prerequisites](#prerequisites)  
-3. [Cluster Setup Steps](#cluster-setup-steps)  
+[1. Introduction](#1-introduction)  
+[2. Prerequisites](#2-prerequisites)  
+[3. Cluster Setup Steps](#3-cluster-setup-steps)  
    - [3.1 Minikube Initialization](#31-minikube-initialization)  
    - [3.2 Cert-Manager Installation](#32-cert-manager-installation)  
    - [3.3 Kubernetes Namespace & RBAC](#33-kubernetes-namespace--rbac)  
