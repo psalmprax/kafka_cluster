@@ -3,26 +3,45 @@
  This `README.md` provides a comprehensive guide to deploying a secure Kafka cluster on Minikube using Confluent Platform Docker images, with a strong focus on Mutual TLS (mTLS) for all internal and external communication. It details the step-by-step process, highlights common pitfalls and errors encountered during the setup, and offers solutions and best practices to avoid them.
 
  ## Table of Contents
- [1. Introduction](#1.-Introduction)
- [2. Prerequisites](#2.-Prerequisites)
- [3. Cluster Setup Steps](#3.-Cluster-Setup-Steps)
-     *  [Minikube Initialization](#3.1-Minikube-Initialization)
-     *  [Cert-Manager Installation](#3.2-Cert-Manager-Installation)
-     *  [Kubernetes Namespace & RBAC](#3.3-Kubernetes-Namespace-&-RBAC)
-     *  [Certificate Authority (CA) Setup](#3.4-Certificate-Authority-(CA)-Setup)
-     *  [Leaf Certificate Issuance](#3.5-Leaf-Certificate-Issuance)
-     *  [Secrets & ConfigMaps Deployment](#3.6-Secrets-&-ConfigMaps-Deployment)
-     *  [StatefulSets Deployment](#3.7-StatefulSets-Deployment)
-     *  [okeeper & Kafka StatefulSets Deployment](#3.7-StatefulSets-Deployment)
- [4. Detailed SSL/TLS Configuration Guide](#4.-Detailed-SSL/TLS-Configuration-Guide)
-     *   Certificate Management with cert-manager
-     *   Keystore & Truststore Generation (initContainers)
-     *   Kubernetes Secrets for Passwords
-     *   Kafka & Zookeeper Configuration (`server.properties`, `zookeeper.properties`)
-     *   Confluent `dub` Entrypoint & Environment Variables
-     *   Readiness & Liveness Probes for mTLS
+ 1.  Introduction
+ 2.  Prerequisites
+ 3.  Cluster Setup Steps
+     *   3.1 Minikube Initialization
+     *   3.2 Cert-Manager Installation
+     *   3.3 Kubernetes Namespace & RBAC
+     *   3.4 Certificate Authority (CA) Setup
+     *   3.5 Leaf Certificate Issuance
+     *   3.6 Secrets & ConfigMaps Deployment
+     *   3.7 Zookeeper & Kafka StatefulSets Deployment
+ 4.  Detailed SSL/TLS Configuration Guide
+     *   4.1 Certificate Management with cert-manager
+     *   4.2 Keystore & Truststore Generation (initContainers)
+     *   4.3 Kubernetes Secrets for Passwords
+     *   4.4 Kafka & Zookeeper Configuration (`server.properties`, `zookeeper.properties`)
+     *   4.5 Confluent `dub` Entrypoint & Environment Variables
+     *   4.6 Readiness & Liveness Probes for mTLS
+     *   4.7 SSL/TLS Mutual Handshake Flow
  5.  Troubleshooting Common Errors & Solutions
+     *   5.1 `javax.net.ssl.SSLHandshakeException: Empty server certificate chain`
+     *   5.2 `java.lang.IllegalArgumentException: No enum constant ...`
+     *   5.3 `Error: Could not find or load main class ...`
+     *   5.4 `java.lang.UnsupportedOperationException: SSL isn't supported ...`
+     *   5.5 `javax.net.ssl.SSLHandshakeException: no cipher suites in common`
+     *   5.6 `Liveness probe failed: Can't open ...`
+     *   5.7 `KAFKA_ADVERTISED_LISTENERS is required.`
+     *   5.8 `KAFKA_SSL_KEYSTORE_FILENAME is required. ...`
+     *   [5.9 `Command [/usr/local/bin/dub path ... exists] FAILED !`](#59-command-usrlocalbindub-path-etckafkasecretschangeitdev-exists-failed--and-kafkaserverkeypassword-exists)
+     *   5.10 `KAFKA_SSL_KEY_CREDENTIALS is required. ...`
+     *   5.11 `io.netty.handler.ssl.NotSslRecordException: not an SSL/TLS record`
+     *   5.12 `Failed to create TrustManager ...`
+     *   5.13 `Pod "kafka-0" is invalid ...`
+     *   5.14 `kafka.zookeeper.ZooKeeperClientTimeoutException`
  6.  Visual Explanations (Diagrams)
+     *   6.1 Overall Architecture Diagram
+     *   6.2 Certificate Hierarchy Diagram
+     *   6.3 mTLS Handshake Flow Diagram
+     *   6.4 InitContainer Process Diagram
+     *   6.5 Confluent `dub` Configuration Flow Diagram
  7.  Verification
  8.  Further Steps
 
