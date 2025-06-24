@@ -334,58 +334,61 @@ graph LR
 
  This diagram illustrates the chain of trust from the self-signed Root CA down to the leaf certificates used by Zookeeper and Kafka.
 
-```mermaid
-graph TD
-    RootCA[Root CA (Self-Signed)]
-    IntermediateCA[Intermediate CA]
-    ZkCert[Zookeeper Server Certificate]
-    KafkaCert[Kafka Server Certificate]
+ ```mermaid
+ graph TD
+     RootCA[Root CA (Self-Signed)]
+     IntermediateCA[Intermediate CA]
+     ZkCert[Zookeeper Server Certificate]
+     KafkaCert[Kafka Server Certificate]
 
-    RootCA --> IntermediateCA
-    IntermediateCA --> ZkCert
-    IntermediateCA --> KafkaCert
-```
+     RootCA -- Signs --> IntermediateCA
+     IntermediateCA -- Signs --> ZkCert
+     IntermediateCA -- Signs --> KafkaCert
+ ```
 
  ### 6.3 mTLS Handshake Flow Diagram
 
  This sequence diagram visualizes the steps involved in a Mutual TLS (mTLS) handshake, highlighting the roles of certificates, keys, and truststores.
 
-sequenceDiagram
-    participant Client
-    participant Server
+ ```mermaid
+ sequenceDiagram
+     participant Client
+     participant Server
 
-    Client->>Server: ClientHello (TLS versions, Ciphers, Client CAs)
-    Server->>Client: ServerHello (Selected TLS, Cipher, Server Cert Chain)
-    Client->>Client: Verify Server Cert Chain (using Client Truststore)
-    alt Server requires Client Auth
-        Client->>Server: Client Certificate (Client Cert Chain)
-        Client->>Server: ClientKeyExchange (Encrypted with Client Private Key)
-        Server->>Server: Verify Client Cert Chain (using Server Truststore)
-        Server->>Server: Decrypt ClientKeyExchange (using Server Private Key)
-    end
-    Client->>Server: ChangeCipherSpec
-    Client->>Server: Finished (Encrypted)
-    Server->>Client: ChangeCipherSpec
-    Server->>Client: Finished (Encrypted)
-    Client->>Server: Application Data (Encrypted)
-    Server->>Client: Application Data (Encrypted)
+     Client->>Server: ClientHello (TLS versions, Ciphers, Client CAs)
+     Server->>Client: ServerHello (Selected TLS, Cipher, Server Cert Chain)
+     Client->>Client: Verify Server Cert Chain (using Client Truststore)
+     alt Server requires Client Auth
+         Client->>Server: Client Certificate (Client Cert Chain)
+         Client->>Server: ClientKeyExchange (Encrypted with Client Private Key)
+         Server->>Server: Verify Client Cert Chain (using Server Truststore)
+         Server->>Server: Decrypt ClientKeyExchange (using Server Private Key)
+     end
+     Client->>Server: ChangeCipherSpec
+     Client->>Server: Finished (Encrypted)
+     Server->>Client: ChangeCipherSpec
+     Server->>Client: Finished (Encrypted)
+     Client<->>Server: Application Data (Encrypted)
+ ```
 
  ### 6.4 InitContainer Process Diagram
 
  This flowchart details the steps performed by the `initContainer` to prepare the Java keystores and truststores from raw certificate secrets.
 
+ ```mermaid
  graph TD
-    A[Start InitContainer] --> B[Mount K8s Secrets\n(Raw Certs & Passwords)]
-    B --> C[Read tls.crt, tls.key, CA.crt]
-    C --> D[Concatenate CA Chain\n(intermediate + root)]
-    D --> E[Generate PKCS12 Keystore\n(server.crt + server.key + CA Chain)]
-    E --> F[Convert PKCS12 to JKS Keystore]
-    F --> G[Import Root CA to JKS Truststore]
-    G --> H[Import Intermediate CA to JKS Truststore]
-    H --> I[Write Password Files\n(e.g., kafka.server.keystore.password)]
-    I --> J[Set File Permissions (chmod 600)]
-    J --> K[Unset Password Env Vars]
-    K --> L[End InitContainer]
+     A[Start InitContainer] --> B{Mount K8s Secrets<br>(Raw Certs & Passwords)}
+     B --> C[Read tls.crt, tls.key, CA.crt]
+     C --> D[Concatenate CA Chain<br>(intermediate + root)]
+     D --> E[Generate PKCS12 Keystore<br>(server.crt + server.key + CA Chain)]
+     E --> F[Convert PKCS12 to JKS Keystore]
+     F --> G[Import Root CA to JKS Truststore]
+     G --> H[Import Intermediate CA to JKS Truststore]
+     H --> I{Write Password Files<br>(e.g., kafka.server.keystore.password)}
+     I --> J[Set File Permissions (chmod 600)]
+     J --> K[Unset Password Env Vars]
+     K --> L[End InitContainer]
+ ```
 
  ### 6.5 Confluent `dub` Configuration Flow Diagram
 
