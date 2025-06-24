@@ -3,17 +3,18 @@
  This `README.md` provides a comprehensive guide to deploying a secure Kafka cluster on Minikube using Confluent Platform Docker images, with a strong focus on Mutual TLS (mTLS) for all internal and external communication. It details the step-by-step process, highlights common pitfalls and errors encountered during the setup, and offers solutions and best practices to avoid them.
 
  ## Table of Contents
- 1.  Introduction
- 2.  Prerequisites
- 3.  Cluster Setup Steps
-     *   Minikube Initialization
-     *   Cert-Manager Installation
-     *   Kubernetes Namespace & RBAC
-     *   Certificate Authority (CA) Setup
-     *   Leaf Certificate Issuance
-     *   Secrets & ConfigMaps Deployment
-     *   Zookeeper & Kafka StatefulSets Deployment
- 4.  Detailed SSL/TLS Configuration Guide
+ [1. Introduction](#1.-Introduction)
+ [2. Prerequisites](#2.-Prerequisites)
+ [3. Cluster Setup Steps](#3.-Cluster-Setup-Steps)
+     *  [Minikube Initialization](#3.1-Minikube-Initialization)
+     *  [Cert-Manager Installation](#3.2-Cert-Manager-Installation)
+     *  [Kubernetes Namespace & RBAC](#3.3-Kubernetes-Namespace-&-RBAC)
+     *  [Certificate Authority (CA) Setup](#3.4-Certificate-Authority-(CA)-Setup)
+     *  [Leaf Certificate Issuance](#3.5-Leaf-Certificate-Issuance)
+     *  [Secrets & ConfigMaps Deployment](#3.6-Secrets-&-ConfigMaps-Deployment)
+     *  [StatefulSets Deployment](#3.7-StatefulSets-Deployment)
+     *  [okeeper & Kafka StatefulSets Deployment](#3.7-StatefulSets-Deployment)
+ [4. Detailed SSL/TLS Configuration Guide](#4.-Detailed-SSL/TLS-Configuration-Guide)
      *   Certificate Management with cert-manager
      *   Keystore & Truststore Generation (initContainers)
      *   Kubernetes Secrets for Passwords
