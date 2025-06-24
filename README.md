@@ -334,17 +334,7 @@ graph LR
 
  This diagram illustrates the chain of trust from the self-signed Root CA down to the leaf certificates used by Zookeeper and Kafka.
 
- ```mermaid
- graph TD
-     RootCA[Root CA (Self-Signed)]
-     IntermediateCA[Intermediate CA]
-     ZkCert[Zookeeper Server Certificate]
-     KafkaCert[Kafka Server Certificate]
-
-     RootCA -- Signs --> IntermediateCA
-     IntermediateCA -- Signs --> ZkCert
-     IntermediateCA -- Signs --> KafkaCert
- ```
+<pre> ```mermaid graph TD RootCA[Root CA (Self-Signed)] IntermediateCA[Intermediate CA] ZkCert[Zookeeper Server Certificate] KafkaCert[Kafka Server Certificate] RootCA -- Signs --> IntermediateCA IntermediateCA -- Signs --> ZkCert IntermediateCA -- Signs --> KafkaCert ``` </pre>
 
  ### 6.3 mTLS Handshake Flow Diagram
 
