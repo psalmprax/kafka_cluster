@@ -274,7 +274,6 @@ Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incompl
  ### 6.1 Overall Architecture Diagram
 
  This diagram illustrates the high-level components and their communication within the Minikube environment.
-
  ```mermaid
  graph LR
      subgraph Minikube Cluster
