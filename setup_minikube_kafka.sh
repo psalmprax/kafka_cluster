@@ -61,6 +61,16 @@ echo "--- Ensuring kubectl context is Minikube ---"
 kubectl config use-context minikube
 
 echo ""
+echo "--- Pre-pulling required Docker images to improve reliability ---"
+# Pre-pulling images can prevent timeouts during deployment if the network is slow.
+# docker pull openjdk:11-jre-slim
+# docker pull confluentinc/cp-zookeeper:7.6.1
+# docker pull confluentinc/cp-kafka:7.6.1
+# docker pull confluentinc/cp-schema-registry:7.6.1
+# docker pull rancher/local-path-provisioner:v0.0.26
+echo "Image pre-pulling complete."
+
+echo ""
 echo "--- Enabling Minikube Addons ---"
 # Cert-manager is no longer a direct Minikube addon in recent versions.
 # We will install it manually.
@@ -151,6 +161,14 @@ kubectl apply -f "${MANIFEST_BASE_PATH}/secrets/" -n "${KAFKA_NAMESPACE}"
 # echo "Waiting for Kafka ZKClient certificate to be issued..."
 # kubectl wait --for=condition=Ready certificate/kafka-zkclient-cert -n "${KAFKA_NAMESPACE}" --timeout=120s
 
+# Add this before applying StatefulSets if you want to ensure a clean slate on every run
+echo "--- Cleaning up existing Kafka and Zookeeper StatefulSets and PVCs (if any) ---"
+kubectl delete statefulset kafka zookeeper --ignore-not-found=true -n "${KAFKA_NAMESPACE}"
+kubectl delete deployment schema-registry --ignore-not-found=true -n "${KAFKA_NAMESPACE}"
+kubectl delete pvc -l app=kafka --ignore-not-found=true -n "${KAFKA_NAMESPACE}"
+kubectl delete pvc -l app=zookeeper --ignore-not-found=true -n "${KAFKA_NAMESPACE}"
+echo "Cleanup complete."
+
 echo ""
 echo "--- Applying Zookeeper and Kafka Services ---"
 kubectl apply -f "${MANIFEST_BASE_PATH}/services/" -n "${KAFKA_NAMESPACE}"
@@ -158,6 +176,23 @@ kubectl apply -f "${MANIFEST_BASE_PATH}/services/" -n "${KAFKA_NAMESPACE}"
 echo ""
 echo "--- Applying Zookeeper and Kafka StatefulSets ---"
 kubectl apply -f "${MANIFEST_BASE_PATH}/statefulsets/" -n "${KAFKA_NAMESPACE}"
+
+echo ""
+echo "--- Applying Schema Registry Deployment ---"
+echo "Creating 'deployments' directory if it doesn't exist..."
+mkdir -p "${MANIFEST_BASE_PATH}/deployments"
+
+# Apply Schema Registry certificate and secrets first
+kubectl apply -f "${MANIFEST_BASE_PATH}/tls_ssl/05-schema-registry-cert.yml" -n "${KAFKA_NAMESPACE}"
+kubectl apply -f "${MANIFEST_BASE_PATH}/secrets/03-schema-registry-credentials.yml" -n "${KAFKA_NAMESPACE}"
+kubectl apply -f "${MANIFEST_BASE_PATH}/services/03-schema-registry-service.yml" -n "${KAFKA_NAMESPACE}"
+
+echo "Waiting for Schema Registry certificate to be issued..."
+kubectl wait --for=condition=Ready certificate/schema-registry-cert -n "${KAFKA_NAMESPACE}" --timeout=120s
+
+echo "Applying Schema Registry Deployment..."
+kubectl apply -f "${MANIFEST_BASE_PATH}/deployments/01-schema-registry-deployment.yml" -n "${KAFKA_NAMESPACE}"
+
 
 
 echo ""
@@ -177,7 +212,7 @@ echo "   - Create the directories for your PVs (e.g., sudo mkdir -p /mnt/disks/s
 echo "   - Customize and apply '${MANIFEST_BASE_PATH}/storage/02-persistentvolume-local-examples.yml'"
 echo ""
 echo "Once Zookeeper and Kafka pods are running and ready, proceed to deploy:"
-echo "   - Schema Registry, ksqlDB, Control Center, etc."
+echo "   - ksqlDB, Control Center, etc. (Schema Registry deployment has been initiated by this script)"
 
 
 ```

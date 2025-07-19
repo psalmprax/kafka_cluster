@@ -1,0 +1,179 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: schema-registry
+  namespace: kafka-cluster
+  labels:
+    app: schema-registry
+spec:
+  replicas: 1 # Start with 1, can be scaled
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+    spec:
+      serviceAccountName: kafka-cluster-sa
+      initContainers:
+        - name: keystore-truststore-init
+          image: openjdk:11-jre-slim
+          env:
+            - name: SR_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEYSTORE_PASSWORD}}
+            - name: SR_KEY_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEY_PASSWORD}}
+            - name: SR_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_TRUSTSTORE_PASSWORD}}
+          command:
+            - "/bin/bash"
+            - "-ecx"
+            - |
+              set -e;
+              SSL_DIR="/mnt/ssl-secrets"; JKS_DIR="/etc/schema-registry/secrets"; mkdir -p ${JKS_DIR}; rm -f ${JKS_DIR}/*;
+              CHAIN_FILE="${JKS_DIR}/ca-chain.crt"; cat "${SSL_DIR}/intermediate-ca/tls.crt" "${SSL_DIR}/root-ca/ca.crt" > "${CHAIN_FILE}";
+              echo "Creating a single, shared Keystore for listener and Kafka client...";
+              openssl pkcs12 -export -in "${SSL_DIR}/schema-registry-tls/tls.crt" -inkey "${SSL_DIR}/schema-registry-tls/tls.key" -certfile "${CHAIN_FILE}" -name schema-registry -out /tmp/sr.p12 -password pass:"${SR_KEYSTORE_PASSWORD}";
+              keytool -importkeystore -srckeystore /tmp/sr.p12 -srcstoretype PKCS12 -srcstorepass "${SR_KEYSTORE_PASSWORD}" -destkeystore "${JKS_DIR}/schema-registry.keystore.jks" -deststoretype JKS -deststorepass "${SR_KEYSTORE_PASSWORD}" -destkeypass "${SR_KEY_PASSWORD}" -noprompt;
+              echo "Verifying Keystore ${JKS_DIR}/schema-registry.keystore.jks...";
+              keytool -list -v -keystore "${JKS_DIR}/schema-registry.keystore.jks" -storepass "${SR_KEYSTORE_PASSWORD}" -noprompt || (echo "ERROR: JKS keystore verification failed!" && exit 1);
+              echo "Creating a single, shared Truststore...";
+              keytool -importcert -alias rootca -keystore "${JKS_DIR}/schema-registry.truststore.jks" -file "${SSL_DIR}/root-ca/ca.crt" -storepass "${SR_TRUSTSTORE_PASSWORD}" -noprompt;
+              keytool -importcert -alias intermediateca -keystore "${JKS_DIR}/schema-registry.truststore.jks" -file "${SSL_DIR}/intermediate-ca/tls.crt" -storepass "${SR_TRUSTSTORE_PASSWORD}" -noprompt;
+              chown -R 1000:1000 "${JKS_DIR}";
+              echo "InitContainer finished.";
+          volumeMounts:
+            - {name: sr-secrets-jks, mountPath: /etc/schema-registry/secrets}
+            - {name: schema-registry-tls-secret, mountPath: /mnt/ssl-secrets/schema-registry-tls, readOnly: true}
+            - {name: root-ca-secret, mountPath: /mnt/ssl-secrets/root-ca, readOnly: true}
+            - {name: intermediate-ca-secret, mountPath: /mnt/ssl-secrets/intermediate-ca, readOnly: true}
+        - name: wait-for-kafka
+          image: confluentinc/cp-schema-registry:7.6.1 # Re-using image, it has openssl
+          command:
+            - "/bin/bash"
+            - "-ec"
+            - |
+              echo "Waiting for all Kafka brokers to be ready for mTLS connections..."
+              CA_CERT="/etc/schema-registry/secrets/ca-chain.crt" # Use the full chain created by the previous init container
+              CLIENT_CERT="/mnt/ssl-secrets/schema-registry-tls/tls.crt"
+              CLIENT_KEY="/mnt/ssl-secrets/schema-registry-tls/tls.key"
+
+              if [ ! -f "$CA_CERT" ] || [ ! -f "$CLIENT_CERT" ] || [ ! -f "$CLIENT_KEY" ]; then
+                echo "SSL certificate files not found! Check volume mounts." && exit 1;
+              fi
+
+              for broker_num in 0 1 2; do
+                broker="kafka-${broker_num}.kafka-headless.kafka-cluster.svc.cluster.local:9093"
+                echo "Checking connection to $broker..."
+                until openssl s_client -connect $broker -cert $CLIENT_CERT -key $CLIENT_KEY -CAfile $CA_CERT -brief </dev/null >/dev/null 2>&1; do
+                  echo "Broker $broker not ready yet, sleeping for 5 seconds..."
+                  sleep 5
+                done
+                echo "Successfully connected to $broker."
+              done
+              echo "All Kafka brokers are ready."
+          volumeMounts:
+            - {name: sr-secrets-jks, mountPath: /etc/schema-registry/secrets, readOnly: true}
+            - {name: schema-registry-tls-secret, mountPath: /mnt/ssl-secrets/schema-registry-tls, readOnly: true}
+            - {name: root-ca-secret, mountPath: /mnt/ssl-secrets/root-ca, readOnly: true}
+            - {name: intermediate-ca-secret, mountPath: /mnt/ssl-secrets/intermediate-ca, readOnly: true}
+      containers:
+        - name: schema-registry
+          image: confluentinc/cp-schema-registry:7.6.1
+          command: ["/etc/confluent/docker/run"]
+          ports:
+            - {name: https, containerPort: 8081}
+          env:
+            # Use the unique pod name for the host.name property, which is crucial for
+            # the stability of the Kafka consumer group used for leader election.
+            # Using the non-unique nodeName can lead to conflicts and timeouts.
+            - {name: SCHEMA_REGISTRY_HOST_NAME, valueFrom: {fieldRef: {fieldPath: metadata.name}}}
+            - {name: SCHEMA_REGISTRY_LISTENERS, value: "https://0.0.0.0:8081"}
+            - name: SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS
+              value: "SSL://kafka-0.kafka-headless.kafka-cluster.svc.cluster.local:9093,SSL://kafka-1.kafka-headless.kafka-cluster.svc.cluster.local:9093,SSL://kafka-2.kafka-headless.kafka-cluster.svc.cluster.local:9093"
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_GROUP_ID, value: "schema-registry"}
+            # Increase the timeout for KafkaStore operations, including consumer group join
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_TIMEOUT_MS, value: "300000"} # 5 minutes; a robust but reasonable timeout for initialization
+            # Adjust Kafka client connection settings. Use '=' as separator, not ':'.
+            # Apply to both the admin client (for topic management) and the consumer (for reading the store).
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_ADMIN_CLIENT_CONFIG_OVERRIDES, value: "connections.max.idle.ms=30000,reconnect.backoff.ms=500,retry.backoff.ms=500"}
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_CONSUMER_CONFIG_OVERRIDES, value: "connections.max.idle.ms=30000,reconnect.backoff.ms=500,retry.backoff.ms=500"}
+            # Enable debug logging for more insights into Kafka client operations
+            - {name: SCHEMA_REGISTRY_LOG4J_ROOT_LOGLEVEL, value: "DEBUG"}
+            # SSL for Schema Registry's own listener
+            - {name: SCHEMA_REGISTRY_SSL_KEYSTORE_LOCATION, value: "/etc/schema-registry/secrets/schema-registry.keystore.jks"}
+            - name: SCHEMA_REGISTRY_SSL_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEYSTORE_PASSWORD}}
+            - name: SCHEMA_REGISTRY_SSL_KEY_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEY_PASSWORD}}
+            - {name: SCHEMA_REGISTRY_SSL_TRUSTSTORE_LOCATION, value: "/etc/schema-registry/secrets/schema-registry.truststore.jks"}
+            - name: SCHEMA_REGISTRY_SSL_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_TRUSTSTORE_PASSWORD}}
+            - {name: SCHEMA_REGISTRY_SSL_CLIENT_AUTH, value: "true"} # REST listener requires 'true' for mTLS, not 'required'
+            # SSL for Schema Registry's client connection to Kafka
+            # These must use the SAME passwords as the listener, because the initContainer creates a single shared keystore/truststore.
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_SECURITY_PROTOCOL, value: "SSL"}
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_LOCATION, value: "/etc/schema-registry/secrets/schema-registry.keystore.jks"}
+            - name: SCHEMA_REGISTRY_KAFKASTORE_SSL_KEYSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEYSTORE_PASSWORD}}
+            - name: SCHEMA_REGISTRY_KAFKASTORE_SSL_KEY_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_KEY_PASSWORD}}
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_LOCATION, value: "/etc/schema-registry/secrets/schema-registry.truststore.jks"}
+            - name: SCHEMA_REGISTRY_KAFKASTORE_SSL_TRUSTSTORE_PASSWORD
+              valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_LISTENER_TRUSTSTORE_PASSWORD}}
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM, value: "https"}
+            - {name: SCHEMA_REGISTRY_KAFKASTORE_SSL_PROTOCOL, value: "TLSv1.2"}
+            - {name: SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL, value: "https"}
+            - name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR
+              value: "2"
+            # Adding resource requests and limits is critical in a constrained environment
+            # Add Topic settings to ensure Schema registry client creates schema topic with desired replication
+            - name: SCHEMA_REGISTRY_KAFKASTORE_TOPIC
+              value: "_schemas"
+          # like Minikube to prevent CPU/memory throttling that can cause timeouts.
+          resources:
+            requests:
+              memory: "2Gi"  # Increased memory request
+              cpu: "1"       # Increased CPU request
+            limits:
+              memory: "4Gi"  # Increased memory limit
+              cpu: "2"       # Increased CPU limit
+          volumeMounts:
+            - {name: sr-secrets-jks, mountPath: /etc/schema-registry/secrets, readOnly: true}
+            # Mount raw certs for probes to use for mTLS health checks
+            - {name: schema-registry-tls-secret, mountPath: /mnt/ssl-secrets/schema-registry-tls, readOnly: true}
+            - {name: intermediate-ca-secret, mountPath: /mnt/ssl-secrets/intermediate-ca, readOnly: true}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  curl --fail --silent --show-error \
+                  --cacert /etc/schema-registry/secrets/ca-chain.crt \
+                  --cert /mnt/ssl-secrets/schema-registry-tls/tls.crt \
+                  --key /mnt/ssl-secrets/schema-registry-tls/tls.key \
+                  https://localhost:8081/status
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  curl --fail --silent --show-error \
+                  --cacert /etc/schema-registry/secrets/ca-chain.crt \
+                  --cert /mnt/ssl-secrets/schema-registry-tls/tls.crt \
+                  --key /mnt/ssl-secrets/schema-registry-tls/tls.key \
+                  https://localhost:8081/status
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+      volumes:
+        - {name: sr-secrets-jks, emptyDir: {}}
+        - {name: schema-registry-tls-secret, secret: {secretName: schema-registry-tls}}
+        - {name: root-ca-secret, secret: {secretName: root-ca-secret}}
+        - {name: intermediate-ca-secret, secret: {secretName: intermediate-ca-secret}}

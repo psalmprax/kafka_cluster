@@ -19,3 +19,16 @@ sudo apt-get update
 
 # 3. Install the Docker packages.
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 4. (Optional but Recommended) Configure Docker to use a reliable DNS.
+# This can help resolve "Client.Timeout" or "connection reset" errors when pulling images.
+echo "Configuring Docker daemon with Google's DNS..."
+sudo mkdir -p /etc/docker
+sudo tee /etc/docker/daemon.json > /dev/null <<EOF
+{
+  "dns": ["8.8.8.8", "8.8.4.4"]
+}
+EOF
+
+echo "Restarting Docker to apply the new configuration..."
+sudo systemctl restart docker

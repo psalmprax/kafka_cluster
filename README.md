@@ -40,6 +40,9 @@
   - [5.12 Failed to create TrustManager](#512-failed-to-create-trustmanager-)  
   - [5.13 Pod kafka-0 is invalid](#513-pod-kafka-0-is-invalid-)  
   - [5.14 ZooKeeperClientTimeoutException](#514-kafkazookeeperzookeeperclienttimeoutexception)  
+  - [5.15 InconsistentClusterIdException](#515-kafkacommoninconsistentclusteridexception)
+  - [5.16 ImagePullBackOff / ErrImagePull](#516-imagepullbackoff--errimagepull--connection-reset-by-peer)
+  - [5.17 Keystore was tampered with, or password was incorrect](#517-keystore-was-tampered-with-or-password-was-incorrect)
 
 - [6. Visual Explanations (Diagrams)](#visual-explanations-diagrams)  
   - [6.1 Overall Architecture Diagram](#61-overall-architecture-diagram)  
@@ -50,6 +53,7 @@
 
 - [7. Verification](#7-verification)  
 - [8. Further Steps](#8-further-steps)  
+- [9. Deploying Schema Registry with mTLS](#9-deploying-schema-registry-with-mtls)
 
 
  ## 1. Introduction
@@ -295,6 +299,45 @@ Any failure at steps 2, 3, 6, or 8 (e.g., certificate not trusted, chain incompl
      *   Ensure `zookeeper.clientCnxnSocket=org.apache.zookeeper.ClientCnxnSocketNetty` is set in Kafka's `server.properties`.
      *   Ensure all Zookeeper client SSL parameters are correctly set in Kafka's configuration (as detailed in previous sections).
  *   **How to Avoid:** Ensure Zookeeper is fully stable before starting Kafka. Use robust connectivity checks.
+
+ ### 5.15 `kafka.common.InconsistentClusterIdException`
+ *   **Problem:** Kafka broker fails to start with an error like "The Cluster ID ... doesn't match stored clusterId ... in meta.properties."
+ *   **Root Cause:** This occurs when the Kafka broker's local `meta.properties` file (stored on its Persistent Volume) contains a `cluster.id` that does not match the `cluster.id` that ZooKeeper is managing. This typically happens when persistent volumes from a previous Kafka deployment are re-used, but ZooKeeper's state has been reset or recreated, leading to a new `cluster.id`.
+ *   **Solution:**
+     1.  Delete the Kafka StatefulSet: `kubectl delete statefulset kafka -n kafka-cluster`
+     2.  **Crucially, delete Kafka's PersistentVolumeClaims (PVCs):** `kubectl delete pvc -l app=kafka -n kafka-cluster`
+     3.  Verify PVCs are gone: `kubectl get pvc -l app=kafka -n kafka-cluster`
+     4.  Re-apply the Kafka StatefulSet: `kubectl apply -f statefulsets/02-kafka-statefulset.yml -n kafka-cluster`
+ *   **How to Avoid:** Always ensure Kafka's persistent data (PVCs) are cleaned up when re-deploying a cluster from scratch, especially if ZooKeeper's data is also being reset. Consider adding a cleanup step for PVCs in your setup script.
+
+ ### 5.16 `ImagePullBackOff` / `ErrImagePull` / `connection reset by peer`
+ *   **Problem:** Pods are stuck in `ImagePullBackOff` or `ErrImagePull` state. Events show errors like `connection reset by peer` or `Client.Timeout exceeded`.
+ *   **Root Cause:** This is almost always a network connectivity issue between your Minikube VM and the Docker registry (e.g., Docker Hub). It is not a YAML configuration error. It can be caused by an unstable internet connection, a firewall, a proxy, or DNS issues inside the Minikube VM.
+ *   **Solution:**
+     *   **Pre-pull the images:** The most reliable solution is to pull the images to your host machine's Docker daemon *before* applying the Kubernetes manifests. The `setup_minikube_kafka.sh` script has been updated to do this automatically.
+     *   **Manual Debugging:**
+         1.  SSH into the Minikube VM: `minikube ssh`
+         2.  Inside the VM, try to pull the image manually: `docker pull confluentinc/cp-schema-registry:7.6.1`
+         3.  Check DNS: `ping registry-1.docker.io`
+         4.  Check general internet access: `ping 8.8.8.8`
+     *   **Restart Minikube:** `minikube stop` followed by `minikube start` can sometimes resolve transient networking issues.
+ *   **How to Avoid:** Run the updated `setup_minikube_kafka.sh` script, which now includes a step to pre-pull all required Confluent and utility images.
+
+ ### 5.17 `Keystore was tampered with, or password was incorrect`
+ *   **Problem:** A Confluent component (like Schema Registry or Kafka) fails to start, with logs showing `UnrecoverableKeyException: Password verification failed` when trying to load a keystore.
+ *   **Root Cause:** There is a subtle difference in how the Confluent `dub` entrypoint script handles SSL configuration for its *own listener* versus how it configures its *internal clients* (like the `kafka-ready` check or Schema Registry's connection to Kafka). While the main listener configuration works well with passwords supplied in files, the internal client configuration often fails with this method and requires passwords to be supplied directly as environment variable values.
+ *   **Solution:** For the client-specific SSL configuration (e.g., `SCHEMA_REGISTRY_KAFKASTORE_SSL_*` or `KAFKA_ZOOKEEPER_SSL_*`), provide the passwords directly from Kubernetes secrets instead of pointing to files created by the `initContainer`.
+ *   **Example (for Schema Registry's Kafka client):**
+     *   **Incorrect (file-based, fails for client config):**
+     ```yaml
+     - {name: SCHEMA_REGISTRY_KAFKASTORE_SSL_KEY_PASSWORD, value: "schema-registry.kafkastore.key.password"}
+     ```
+     *   **Correct (direct value from secret):**
+     ```yaml
+     - name: SCHEMA_REGISTRY_KAFKASTORE_SSL_KEY_PASSWORD
+       valueFrom: {secretKeyRef: {name: schema-registry-credentials, key: SCHEMA_REGISTRY_KAFKASTORE_KEYSTORE_PASSWORD}}
+     ```
+ *   **How to Avoid:** When configuring a Confluent component that acts as a client to another (e.g., Schema Registry -> Kafka, Kafka -> Zookeeper), supply its client SSL passwords directly as environment variable values from secrets, rather than using the file-based approach that works for server listeners.
 
 ## 6. Visual Explanations (Diagrams)
 

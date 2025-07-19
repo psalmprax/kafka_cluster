@@ -1,0 +1,19 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: schema-registry-cert
+  namespace: kafka-cluster
+spec:
+  secretName: schema-registry-tls
+  issuerRef:
+    name: intermediate-ca-issuer
+    kind: Issuer
+    group: cert-manager.io
+  commonName: schema-registry-svc.kafka-cluster.svc.cluster.local
+  dnsNames:
+    - "schema-registry-svc.kafka-cluster.svc.cluster.local"
+  duration: 8760h # 1 year
+  renewBefore: 168h # 7 days
+  usages:
+    - server auth # For its own HTTPS listener
+    - client auth # To authenticate itself to Kafka brokers

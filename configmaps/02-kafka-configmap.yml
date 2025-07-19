@@ -42,9 +42,9 @@ data:
     # SSL Configuration for Kafka Client to Zookeeper
     zookeeper.ssl.client.enable=true
     zookeeper.ssl.keystore.location=/etc/kafka/secrets/kafka.zkclient.keystore.jks # Corrected path
-    zookeeper.ssl.keystore.password=/etc/kafka/secrets/kafka.zkclient.keystore.password # Point to password file
+    zookeeper.ssl.keystore.password=__KAFKA_ZKCLIENT_KEYSTORE_PASSWORD__ # This is set by the KAFKA_ZOOKEEPER_SSL_KEYSTORE_PASSWORD env var
     zookeeper.ssl.truststore.location=/etc/kafka/secrets/kafka.zkclient.truststore.jks # Corrected path
-    zookeeper.ssl.truststore.password=/etc/kafka/secrets/kafka.zkclient.truststore.password # Point to password file
+    zookeeper.ssl.truststore.password=__KAFKA_ZKCLIENT_TRUSTSTORE_PASSWORD__ # This is set by the KAFKA_ZOOKEEPER_SSL_TRUSTSTORE_PASSWORD env var
     zookeeper.ssl.protocol=TLSv1.2 # Explicitly set protocol for ZK client
     zookeeper.ssl.endpoint.identification.algorithm=HTTPS # Hostname verification for ZK
 
@@ -60,6 +60,11 @@ data:
     offsets.topic.replication.factor=3
     transaction.state.log.replication.factor=3
     transaction.state.log.min.isr=2
+
+    # Set the default cleanup policy for auto-created topics.
+    # Schema Registry requires its internal _schemas topic to have a 'compact' policy for log compaction.
+    log.cleanup.policy=compact
+    
 
     ############################# Internal Topic Settings  #############################
     # auto.create.topics.enable=true # Consider setting to false in production

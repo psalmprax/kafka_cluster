@@ -13,7 +13,7 @@ spec:
       app: zookeeper
   updateStrategy:
     type: RollingUpdate
-  podManagementPolicy: Parallel # Or OrderedReady, Parallel allows faster startup
+  podManagementPolicy: OrderedReady # Ensures sequential startup, more stable for ZK
   template:
     metadata:
       labels:
@@ -43,21 +43,18 @@ spec:
               echo "--- Starting Zookeeper InitContainer ---"
               SSL_DIR="/mnt/ssl-secrets"
               JKS_DIR="/mnt/ssl-jks"
-              CONFIG_DIR="/mnt/zookeeper-config"
               DATA_DIR="/var/lib/zookeeper/data"
 
               echo "Making directories and cleaning up previous runs..."
               mkdir -p ${JKS_DIR}
-              mkdir -p ${CONFIG_DIR}
-              mkdir -p ${DATA_DIR}
-              rm -rf ${JKS_DIR}/* ${CONFIG_DIR}/* # Use -rf for safety
+              rm -rf ${JKS_DIR}/*
 
               # --- JKS Generation ---
               KEYSTORE_PATH="${JKS_DIR}/zookeeper.server.keystore.jks" # Revert to JKS
               TRUSTSTORE_PATH="${JKS_DIR}/zookeeper.server.truststore.jks" # Truststore remains JKS
-              echo "Creating full CA chain file for the keystore..."
-              CHAIN_FILE="/tmp/ca-chain.crt"
-              cat "${SSL_DIR}/intermediate-ca/tls.crt" "${SSL_DIR}/root-ca/ca.crt" > "${CHAIN_FILE}"
+              echo "Creating full CA chain file for keystores and probes..."
+              CHAIN_FILE="${JKS_DIR}/ca-chain.crt" # Create directly in shared volume
+              cat "${SSL_DIR}/intermediate-ca/tls.crt" "${SSL_DIR}/root-ca/ca.crt" > "${CHAIN_FILE}" 2>&1 || { echo "ERROR: Failed to create CA chain file" && exit 1; }
               echo "Creating Zookeeper Server Keystore ${KEYSTORE_PATH}..."
               # Create a combined PEM file with server cert + intermediate + root
               SERVER_FULL_CHAIN_PEM="/tmp/zookeeper-server-full-chain.pem"
@@ -86,52 +83,14 @@ spec:
                 -file ${SSL_DIR}/intermediate-ca/tls.crt \
                 -storepass ${ZK_SERVER_TRUSTSTORE_PASSWORD} -noprompt
 
-              # --- Config File Generation ---
-              echo "Generating myid file..."
-              MY_ID=$(( $(hostname | awk -F'-' '{print $NF}') + 1 ))
-              echo ${MY_ID} > "${DATA_DIR}/myid"
-
-              echo "Generating zookeeper.properties file at ${CONFIG_DIR}/zookeeper.properties..."
-              cat > ${CONFIG_DIR}/zookeeper.properties <<EOF
-              dataDir=${DATA_DIR}
-              dataLogDir=/var/lib/zookeeper/log
-              tickTime=2000
-              initLimit=10
-              syncLimit=5
-              autopurge.snapRetainCount=3
-              autopurge.purgeInterval=1
-              maxClientCnxns=60
-              standaloneEnabled=false
-              admin.enableServer=true
-              admin.serverPort=8080
-              4lw.commands.whitelist=*
-              secureClientPort=2281
-              serverCnxnFactory=org.apache.zookeeper.server.NettyServerCnxnFactory
-              ssl.clientAuth=need
-              ssl.keyStore.location=/mnt/ssl-jks/zookeeper.server.keystore.jks # Revert path to .jks
-              ssl.keyStore.type=JKS # Revert type to JKS
-              ssl.keyStore.password=${ZK_SERVER_KEYSTORE_PASSWORD}
-              ssl.key.password=${ZK_SERVER_KEYSTORE_PASSWORD}
-              ssl.trustStore.location=/mnt/ssl-jks/zookeeper.server.truststore.jks
-              ssl.enabledProtocols=TLSv1.2,TLSv1.3
-              ssl.cipherSuites=TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256
-              ssl.trustStore.password=${ZK_SERVER_TRUSTSTORE_PASSWORD}
-
-              server.1=zookeeper-0.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-              server.2=zookeeper-1.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-              server.3=zookeeper-2.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888
-              EOF
-
               echo "Setting permissions for Zookeeper user..." # This is an opportunity to show how permissions for files are set for Zookeeper
-              chown -R 1000:1000 "${JKS_DIR}" "${CONFIG_DIR}" "${DATA_DIR}"
+              chown -R 1000:1000 "${JKS_DIR}" "${DATA_DIR}"
 
               echo "--- Zookeeper InitContainer finished ---"
-              ls -lR "${JKS_DIR}" "${CONFIG_DIR}" "${DATA_DIR}"
+              ls -lR "${JKS_DIR}" "${DATA_DIR}"
           volumeMounts:
             - name: ssl-jks # Output volume for generated JKS files
               mountPath: /mnt/ssl-jks
-            - name: zookeeper-generated-config # Output volume for generated config files
-              mountPath: /mnt/zookeeper-config
             - name: zookeeper-data # Mount data dir to write the 'myid' file
               mountPath: /var/lib/zookeeper/data
             - name: zookeeper-server-tls-secret # ZK's own server cert/key
@@ -146,6 +105,8 @@ spec:
       containers:
         - name: zookeeper
           image: confluentinc/cp-zookeeper:7.6.1 # Updated to a newer stable version
+          # The command is removed to allow the default Confluent 'dub' entrypoint to run.
+          # It will use the ZOOKEEPER_* env vars to generate the configuration.
           ports:
             - name: client-ssl
               containerPort: 2281 # secureClientPort
@@ -154,39 +115,35 @@ spec:
             - name: leader-election
               containerPort: 3888
           env:
-            - name: ZOOKEEPER_SECURE_CLIENT_PORT
-              value: "2281"
-            - name: ZOOKEEPER_SERVER_CNXN_FACTORY
-              value: "org.apache.zookeeper.server.NettyServerCnxnFactory"
-            # Explicitly provide all SSL configuration via environment variables
-            - name: ZOOKEEPER_SSL_CLIENT_AUTH
-              value: "need"
-            - name: ZOOKEEPER_SSL_KEYSTORE_LOCATION
-              value: "/mnt/ssl-jks/zookeeper.server.keystore.jks"
-            - name: ZOOKEEPER_SSL_KEYSTORE_TYPE
-              value: "JKS"
+            - {name: ZOOKEEPER_CLIENT_PORT, value: "2181"} # Standard non-secure port, can be omitted if not used
+            - {name: ZOOKEEPER_TICK_TIME, value: "2000"}
+            - {name: ZOOKEEPER_INIT_LIMIT, value: "10"}
+            - {name: ZOOKEEPER_SYNC_LIMIT, value: "5"}
+            - {name: ZOOKEEPER_AUTOPURGE_SNAP_RETAIN_COUNT, value: "3"}
+            - {name: ZOOKEEPER_AUTOPURGE_PURGE_INTERVAL, value: "1"}
+            - {name: ZOOKEEPER_MAX_CLIENT_CNXNS, value: "60"}
+            - {name: ZOOKEEPER_STANDALONE_ENABLED, value: "false"}
+            - {name: ZOOKEEPER_ADMIN_ENABLE_SERVER, value: "true"}
+            - {name: ZOOKEEPER_ADMIN_SERVER_PORT, value: "8080"}
+            - {name: ZOOKEEPER_SECURE_CLIENT_PORT, value: "2281"}
+            - {name: ZOOKEEPER_SERVER_CNXN_FACTORY, value: "org.apache.zookeeper.server.NettyServerCnxnFactory"}
+            # Define Zookeeper ensemble members as environment variables for dub
+            # This replaces the need for zookeeper.properties.template
+            - {name: ZOOKEEPER_SERVER_1, value: "zookeeper-0.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888"}
+            - {name: ZOOKEEPER_SERVER_2, value: "zookeeper-1.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888"}
+            - {name: ZOOKEEPER_SERVER_3, value: "zookeeper-2.zookeeper-headless.kafka-cluster.svc.cluster.local:2888:3888"}
+            - {name: ZOOKEEPER_DATA_DIR, value: "/var/lib/zookeeper/data"}
+            - {name: ZOOKEEPER_DATA_LOG_DIR, value: "/var/lib/zookeeper/log"}
+            - {name: ZOOKEEPER_SSL_CLIENT_AUTH, value: "need"}
+            - {name: ZOOKEEPER_SSL_KEYSTORE_LOCATION, value: "/mnt/ssl-jks/zookeeper.server.keystore.jks"}
+            - {name: ZOOKEEPER_SSL_KEYSTORE_TYPE, value: "JKS"}
             - name: ZOOKEEPER_SSL_KEYSTORE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: zookeeper-credentials
-                  key: ZK_SERVER_KEYSTORE_PASSWORD
-            - name: ZOOKEEPER_SSL_KEY_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: zookeeper-credentials
-                  key: ZK_SERVER_KEYSTORE_PASSWORD
-            - name: ZOOKEEPER_SSL_TRUSTSTORE_LOCATION
-              value: "/mnt/ssl-jks/zookeeper.server.truststore.jks"
+              valueFrom: {secretKeyRef: {name: zookeeper-credentials, key: ZK_SERVER_KEYSTORE_PASSWORD}}
+            - {name: ZOOKEEPER_SSL_TRUSTSTORE_LOCATION, value: "/mnt/ssl-jks/zookeeper.server.truststore.jks"}
             - name: ZOOKEEPER_SSL_TRUSTSTORE_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: zookeeper-credentials
-                  key: ZK_SERVER_TRUSTSTORE_PASSWORD
-            - name: ZOOKEEPER_SSL_ENABLED_PROTOCOLS
-              value: "TLSv1.2,TLSv1.3"
-            - name: ZOOKEEPER_SSL_CIPHER_SUITES
-              value: "TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256"
-          # No env vars for passwords are needed here, as they are now baked into the properties file by the initContainer.
+              valueFrom: {secretKeyRef: {name: zookeeper-credentials, key: ZK_SERVER_TRUSTSTORE_PASSWORD}}
+            - {name: ZOOKEEPER_SSL_ENABLED_PROTOCOLS, value: "TLSv1.2,TLSv1.3"}
+            - {name: ZOOKEEPER_SSL_CIPHER_SUITES, value: "TLS_AES_256_GCM_SHA384,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_DHE_RSA_WITH_AES_256_GCM_SHA384,TLS_DHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_RSA_WITH_AES_256_GCM_SHA384,TLS_RSA_WITH_AES_128_GCM_SHA256"}
           resources: # Add resource requests and limits
             requests:
               memory: "1Gi" # Example
@@ -199,9 +156,6 @@ spec:
               mountPath: /var/lib/zookeeper/data
             - name: zookeeper-log # Separate log dir if desired, or combine with data
               mountPath: /var/lib/zookeeper/log
-            - name: zookeeper-generated-config # Mount the config generated by the initContainer
-              mountPath: /etc/zookeeper/conf
-              readOnly: true
             - name: ssl-jks # Mount the JKS files prepared by initContainer, path matches ZOOKEEPER_SSL_*_LOCATION
               mountPath: /mnt/ssl-jks # Must match paths in zoo.cfg
               readOnly: true
@@ -216,7 +170,7 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - "openssl s_client -connect localhost:2281 -tls1_2 -cert /mnt/ssl-secrets/zookeeper-server-tls/tls.crt -key /mnt/ssl-secrets/zookeeper-server-tls/tls.key -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
+                - "openssl s_client -connect localhost:2281 -tls1_2 -cert /mnt/ssl-secrets/zookeeper-server-tls/tls.crt -key /mnt/ssl-secrets/zookeeper-server-tls/tls.key -CAfile /mnt/ssl-jks/ca-chain.crt -brief < /dev/null"
             initialDelaySeconds: 15
             timeoutSeconds: 5
             periodSeconds: 10
@@ -225,14 +179,12 @@ spec:
               command:
                 - /bin/sh
                 - -c
-                - "openssl s_client -connect localhost:2281 -tls1_2 -cert /mnt/ssl-secrets/zookeeper-server-tls/tls.crt -key /mnt/ssl-secrets/zookeeper-server-tls/tls.key -CAfile /mnt/ssl-secrets/intermediate-ca/tls.crt"
+                - "openssl s_client -connect localhost:2281 -tls1_2 -cert /mnt/ssl-secrets/zookeeper-server-tls/tls.crt -key /mnt/ssl-secrets/zookeeper-server-tls/tls.key -CAfile /mnt/ssl-jks/ca-chain.crt -brief < /dev/null"
             initialDelaySeconds: 20
             timeoutSeconds: 5
             periodSeconds: 15
       volumes:
         - name: ssl-jks # Shared volume for JKS files
-          emptyDir: {}
-        - name: zookeeper-generated-config # Shared volume for generated config files
           emptyDir: {}
         - name: zookeeper-server-tls-secret
           secret:
